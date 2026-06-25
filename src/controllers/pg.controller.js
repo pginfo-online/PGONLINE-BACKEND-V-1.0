@@ -90,8 +90,8 @@ const createPG = asyncHandler(async (req, res) => {
  * @route PUT /api/v1/pg/:id
  */
 const updatePG = asyncHandler(async (req, res) => {
-  const pg = await pgService.updatePG(req.params.id, req.user._id, req.body);
-  successResponse(res, 'PG listing updated', { pg });
+  const result = await pgService.updatePG(req.params.id, req.user._id, req.body);
+  successResponse(res, 'Changes submitted for admin approval. Your listing will update once approved.', result);
 });
 
 /**
@@ -121,4 +121,8 @@ const getSuggestions = asyncHandler(async (req, res) => {
   successResponse(res, 'Suggestions retrieved', result);
 });
 
-module.exports = { getPGs, getPGById, createPG, updatePG, deletePG, getMyPGs, aiSearch, getSuggestions };
+const pgUpdateRequestController = require('./pgUpdateRequest.controller');
+const getMyUpdateRequests = pgUpdateRequestController.getMyUpdateRequests;
+const cancelUpdateRequest = pgUpdateRequestController.cancelUpdateRequest;
+
+module.exports = { getPGs, getPGById, createPG, updatePG, deletePG, getMyPGs, aiSearch, getSuggestions, getMyUpdateRequests, cancelUpdateRequest };

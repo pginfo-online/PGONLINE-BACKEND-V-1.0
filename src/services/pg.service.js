@@ -1,4 +1,5 @@
 const PG = require('../models/PG.model');
+const PGUpdateRequest = require('../models/PGUpdateRequest.model');
 
 /**
  * Build MongoDB query from search params
@@ -135,9 +136,34 @@ const updatePG = async (pgId, ownerId, data) => {
     throw err;
   }
 
-  Object.assign(pg, data);
-  await pg.save();
-  return pg;
+  const originalSnapshot = pg.toObject();
+
+  // Cancel any existing pending or correction_required requests for this PG
+  await PGUpdateRequest.updateMany(
+    { pg: pgId, status: { $in: ['pending', 'correction_required'] } },
+    { $set: { status: 'cancelled' } }
+  );
+
+  // Create a new update request
+  const newRequest = new PGUpdateRequest({
+    pg: pgId,
+    owner: ownerId,
+    proposedChanges: data,
+    originalSnapshot,
+    status: 'pending',
+    auditLog: [
+      {
+        action: 'submitted',
+        by: ownerId,
+        at: new Date(),
+        comment: 'Update submitted by owner',
+      },
+    ],
+  });
+
+  await newRequest.save();
+
+  return { requestCreated: true, requestId: newRequest._id };
 };
 
 /**

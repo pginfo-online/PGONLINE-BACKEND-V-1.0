@@ -89,3 +89,4 @@ Scroll down to the **Environment Variables** section on the Render Web Service c
 - **Database Access Rules**: In MongoDB Atlas, you must allow connection requests. Under **Network Access**, add `0.0.0.0/0` (allow access from anywhere) because Render's outbound IP addresses are dynamic. Alternatively, you can use a static outbound IP proxy service if strict IP security is needed.
 - **CORS Protection**: Double check that `CLIENT_URL` is configured correctly. Requests from unauthorized origins will be blocked with a CORS error.
 - **Spin-up Delay (Free Tier)**: If you use the Free instance tier on Render, the container goes to sleep after 15 minutes of inactivity. The next request triggers a cold-start, taking 50-90 seconds. To avoid this, consider upgrading to the **Starter** tier ($7/month) or using a ping service (like UptimeRobot) to keep it awake.
+

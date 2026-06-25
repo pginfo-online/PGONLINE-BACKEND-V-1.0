@@ -7,6 +7,8 @@ const leadRoutes = require('./lead.routes');
 const visitRoutes = require('./visit.routes');
 const adminRoutes = require('./admin.routes');
 const uploadRoutes = require('./upload.routes');
+const meetupRoutes = require('./meetup.routes');
+
 
 router.use('/auth', authRoutes);
 router.use('/pg', pgRoutes);
@@ -14,13 +16,15 @@ router.use('/lead', leadRoutes);
 router.use('/visit', visitRoutes);
 router.use('/admin', adminRoutes);
 router.use('/upload', uploadRoutes);
+router.use('/meetups', meetupRoutes);
+
 
 // API info
 router.get('/', (req, res) => {
   res.json({
     success: true,
     message: 'PGinfo.online API v1',
-    endpoints: ['/auth', '/pg', '/lead', '/visit', '/admin', '/upload'],
+    endpoints: ['/auth', '/pg', '/lead', '/visit', '/admin', '/upload', '/meetups'],
   });
 });
 

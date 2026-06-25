@@ -15,6 +15,7 @@ const errorResponse = (res, message, statusCode = 500, errors = null) => {
 };
 
 const paginatedResponse = (res, message, data, pagination) => {
+  // `data` is the list array directly — clients read response.data as items
   return res.status(200).json({
     success: true,
     message,
