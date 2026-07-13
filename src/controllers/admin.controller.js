@@ -151,4 +151,27 @@ const getAnalytics = asyncHandler(async (req, res) => {
   });
 });
 
-module.exports = { getAllPGs, approvePG, rejectPG, toggleVerify, removePG, getAllUsers, suspendUser, deleteUser, getAnalytics };
+/**
+ * @route POST /api/v1/admin/users
+ */
+const createOwner = asyncHandler(async (req, res) => {
+  const { name, email, phone, password } = req.body;
+  const emailLower = email.toLowerCase().trim();
+
+  const existingUser = await User.findOne({ email: emailLower });
+  if (existingUser) {
+    return res.status(409).json({ success: false, message: 'User with this email already exists' });
+  }
+
+  const user = await User.create({
+    name,
+    email: emailLower,
+    phone: phone || undefined,
+    password,
+    role: 'owner',
+  });
+
+  successResponse(res, 'Owner created successfully', { user: user.toSafeObject() }, 201);
+});
+
+module.exports = { getAllPGs, approvePG, rejectPG, toggleVerify, removePG, getAllUsers, suspendUser, deleteUser, getAnalytics, createOwner };

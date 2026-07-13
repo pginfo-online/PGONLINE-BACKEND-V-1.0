@@ -125,6 +125,7 @@ const pgSchema = new mongoose.Schema(
 );
 
 // ─── Indexes ──────────────────────────────────────────────────────────────────
+pgSchema.index({ status: 1, city: 1, createdAt: -1 });
 pgSchema.index({ city: 1, area: 1 });
 pgSchema.index({ status: 1 });
 pgSchema.index({ owner: 1 });

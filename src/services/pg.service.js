@@ -72,12 +72,15 @@ const buildSort = (sort) => {
 const getPGs = async (params) => {
   const query = buildSearchQuery(params);
   const sort = buildSort(params.sort);
-  const page = params.page || 1;
-  const limit = params.limit || 12;
+  const page = Math.max(1, parseInt(params.page, 10) || 1);
+  const hasPagination = params.page !== undefined || params.limit !== undefined;
+  let limit = Math.max(1, parseInt(params.limit, 10) || (hasPagination ? 12 : 50));
+  if (limit > 50) limit = 50;
   const skip = (page - 1) * limit;
 
   const [pgs, total] = await Promise.all([
     PG.find(query)
+      .select('name city area address rent food ac gender photos isVerified isAvailable status owner createdAt')
       .populate('owner', 'name email phone')
       .sort(sort)
       .skip(skip)
@@ -122,7 +125,36 @@ const getPGById = async (id) => {
  * Create a new PG listing
  */
 const createPG = async (ownerId, data) => {
-  return PG.create({ ...data, owner: ownerId, status: 'pending' });
+  const name = data.name ? data.name.trim() : '';
+  const city = data.city;
+  const area = data.area ? data.area.trim() : '';
+  const address = data.address ? data.address.trim() : '';
+
+  const escapeRegex = (str) => str.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+
+  const existingPG = await PG.findOne({
+    owner: ownerId,
+    name: { $regex: new RegExp(`^${escapeRegex(name)}$`, 'i') },
+    city,
+    area: { $regex: new RegExp(`^${escapeRegex(area)}$`, 'i') },
+    address: { $regex: new RegExp(`^${escapeRegex(address)}$`, 'i') },
+    status: { $in: ['pending', 'approved'] },
+  });
+
+  if (existingPG) {
+    const err = new Error('You have already submitted a PG listing with this name and address.');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  return PG.create({
+    ...data,
+    name,
+    area,
+    address,
+    owner: ownerId,
+    status: 'pending',
+  });
 };
 
 /**

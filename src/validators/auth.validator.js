@@ -45,6 +45,17 @@ const verifyOtpLoginSchema = z.object({
   otp: z.string().length(6, 'OTP must be exactly 6 digits'),
 });
 
+const createOwnerSchema = z.object({
+  name: z.string().min(2, 'Name must be at least 2 characters').max(100),
+  email: z.string().email('Invalid email address'),
+  phone: z
+    .string()
+    .regex(/^[6-9]\d{9}$/, 'Enter a valid 10-digit Indian mobile number')
+    .optional()
+    .or(z.literal('')), // allow empty string or optional
+  password: z.string().min(6, 'Password must be at least 6 characters'),
+});
+
 module.exports = {
   registerSchema,
   loginSchema,
@@ -52,4 +63,5 @@ module.exports = {
   sendOtpSchema,
   verifyOtpRegisterSchema,
   verifyOtpLoginSchema,
+  createOwnerSchema,
 };

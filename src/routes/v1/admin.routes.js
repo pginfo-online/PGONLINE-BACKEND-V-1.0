@@ -1,9 +1,11 @@
 const express = require('express');
 const router = express.Router();
-const { getAllPGs, approvePG, rejectPG, toggleVerify, removePG, getAllUsers, suspendUser, deleteUser, getAnalytics } = require('../../controllers/admin.controller');
+const { getAllPGs, approvePG, rejectPG, toggleVerify, removePG, getAllUsers, suspendUser, deleteUser, getAnalytics, createOwner } = require('../../controllers/admin.controller');
 const { getAllUpdateRequests, getUpdateRequestById, approveUpdateRequest, rejectUpdateRequest, requestCorrection } = require('../../controllers/pgUpdateRequest.controller');
 const { adminGetAllMeetups, adminToggleApproval, adminDeleteMeetup } = require('../../controllers/meetup.controller');
 const { protect, authorize } = require('../../middlewares/auth.middleware');
+const validate = require('../../middlewares/validate.middleware');
+const { createOwnerSchema } = require('../../validators/auth.validator');
 
 
 // All admin routes require admin role
@@ -16,6 +18,7 @@ router.put('/pgs/:id/verify', toggleVerify);
 router.delete('/pgs/:id', removePG);
 
 router.get('/users', getAllUsers);
+router.post('/users', validate(createOwnerSchema), createOwner);
 router.put('/users/:id/suspend', suspendUser);
 router.delete('/users/:id', deleteUser);
 

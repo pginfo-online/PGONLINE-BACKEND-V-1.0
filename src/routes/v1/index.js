@@ -8,6 +8,7 @@ const visitRoutes = require('./visit.routes');
 const adminRoutes = require('./admin.routes');
 const uploadRoutes = require('./upload.routes');
 const meetupRoutes = require('./meetup.routes');
+const appVersionRoutes = require('./appVersion.routes');
 
 
 router.use('/auth', authRoutes);
@@ -17,6 +18,7 @@ router.use('/visit', visitRoutes);
 router.use('/admin', adminRoutes);
 router.use('/upload', uploadRoutes);
 router.use('/meetups', meetupRoutes);
+router.use('/app-version', appVersionRoutes);
 
 
 // API info
