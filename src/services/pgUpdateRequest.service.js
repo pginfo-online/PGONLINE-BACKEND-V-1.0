@@ -5,16 +5,38 @@ const PG = require('../models/PG.model');
  * Get all update requests for admin
  */
 const getAllUpdateRequests = async (params = {}) => {
-  const { status, page = 1, limit = 10 } = params;
+  const status = typeof params.status === 'string' ? params.status.trim() : '';
+  const search = typeof params.search === 'string' ? params.search.trim().replace(/\s+/g, ' ') : '';
+  const parsedPage = parseInt(params.page, 10) || 1;
+  const parsedLimit = Math.min(parseInt(params.limit, 10) || 20, 50);
+  const skip = (parsedPage - 1) * parsedLimit;
+
   const query = {};
 
-  if (status) {
+  if (status && status !== 'all') {
     query.status = status;
   }
 
-  const parsedPage = parseInt(page, 10) || 1;
-  const parsedLimit = parseInt(limit, 10) || 10;
-  const skip = (parsedPage - 1) * parsedLimit;
+  if (search) {
+    const searchTerms = search.split(' ').filter(Boolean);
+    const searchOr = searchTerms.flatMap((term) => {
+      const safeTerm = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = new RegExp(safeTerm, 'i');
+
+      return [
+        { adminComment: regex },
+        { 'proposedChanges.name': regex },
+        { 'proposedChanges.city': regex },
+        { 'proposedChanges.area': regex },
+        { 'proposedChanges.contactPhone': regex },
+        { 'originalSnapshot.name': regex },
+        { 'originalSnapshot.city': regex },
+        { 'originalSnapshot.area': regex },
+      ];
+    });
+
+    query.$or = searchOr;
+  }
 
   const [requests, total] = await Promise.all([
     PGUpdateRequest.find(query)
@@ -35,6 +57,8 @@ const getAllUpdateRequests = async (params = {}) => {
       limit: parsedLimit,
       total,
       totalPages: Math.ceil(total / parsedLimit),
+      hasNext: parsedPage * parsedLimit < total,
+      hasPrev: parsedPage > 1,
     },
   };
 };

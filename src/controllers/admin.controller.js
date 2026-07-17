@@ -1,16 +1,64 @@
 const asyncHandler = require('../utils/asyncHandler');
-const { successResponse } = require('../utils/apiResponse');
+const { successResponse, paginatedResponse } = require('../utils/apiResponse');
 const PG = require('../models/PG.model');
 const User = require('../models/User.model');
 const Lead = require('../models/Lead.model');
 const VisitRequest = require('../models/VisitRequest.model');
 
+// /**
+//  * @route GET /api/v1/admin/pgs
+//  */
+// const getAllPGs = asyncHandler(async (req, res) => {
+//   const { status, page = 1, limit = 20 } = req.query;
+//   const query = status ? { status } : {};
+//   const skip = (page - 1) * limit;
+
+//   const [pgs, total] = await Promise.all([
+//     PG.find(query)
+//       .populate('owner', 'name email phone')
+//       .sort({ createdAt: -1 })
+//       .skip(skip)
+//       .limit(Number(limit))
+//       .lean(),
+//     PG.countDocuments(query),
+//   ]);
+
+//   successResponse(res, 'All PG listings', { pgs, total, page: Number(page), totalPages: Math.ceil(total / limit) });
+// });
+
+
 /**
  * @route GET /api/v1/admin/pgs
+ * @desc  Get all PG listings with high-signal search, status filter, and pagination
  */
 const getAllPGs = asyncHandler(async (req, res) => {
-  const { status, page = 1, limit = 20 } = req.query;
-  const query = status ? { status } : {};
+  const cleanStatus = typeof req.query.status === 'string' ? req.query.status.trim() : '';
+  const cleanSearch = typeof req.query.search === 'string' ? req.query.search.trim().replace(/\s+/g, ' ') : '';
+
+  const page = Number.isFinite(Number(req.query.page)) && Number(req.query.page) > 0 ? Number(req.query.page) : 1;
+  const limit = Number.isFinite(Number(req.query.limit)) && Number(req.query.limit) > 0
+    ? Math.min(Number(req.query.limit), 50)
+    : 20;
+
+  const query = {};
+
+  if (cleanStatus && cleanStatus !== 'all') {
+    query.status = cleanStatus;
+  }
+
+  if (cleanSearch) {
+    const searchTerms = cleanSearch.split(' ').filter(Boolean);
+    const escapedTerms = searchTerms.map((term) => term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    query.$or = escapedTerms.flatMap((term) => [
+      { name: new RegExp(term, 'i') },
+      { area: new RegExp(term, 'i') },
+      { city: new RegExp(term, 'i') },
+      { address: new RegExp(term, 'i') },
+      { description: new RegExp(term, 'i') },
+      { contactPhone: new RegExp(term, 'i') },
+    ]);
+  }
+
   const skip = (page - 1) * limit;
 
   const [pgs, total] = await Promise.all([
@@ -18,13 +66,23 @@ const getAllPGs = asyncHandler(async (req, res) => {
       .populate('owner', 'name email phone')
       .sort({ createdAt: -1 })
       .skip(skip)
-      .limit(Number(limit))
+      .limit(limit)
       .lean(),
     PG.countDocuments(query),
   ]);
 
-  successResponse(res, 'All PG listings', { pgs, total, page: Number(page), totalPages: Math.ceil(total / limit) });
+  const totalPages = Math.max(1, Math.ceil(total / limit));
+
+  paginatedResponse(res, 'All PG listings', pgs, {
+    total,
+    page,
+    limit,
+    totalPages,
+    hasNext: page * limit < total,
+    hasPrev: page > 1,
+  });
 });
+
 
 /**
  * @route PUT /api/v1/admin/pgs/:id/approve

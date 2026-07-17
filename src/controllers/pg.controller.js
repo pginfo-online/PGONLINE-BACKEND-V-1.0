@@ -105,10 +105,77 @@ const deletePG = asyncHandler(async (req, res) => {
 /**
  * @route GET /api/v1/pg/my - Owner's own listings
  */
+// const getMyPGs = asyncHandler(async (req, res) => {
+//   const PG = require('../models/PG.model');
+//   const pgs = await PG.find({ owner: req.user._id }).sort({ createdAt: -1 }).lean();
+//   successResponse(res, 'Your listings retrieved', { pgs });
+// });
+
+
+
+// pg.controller.js (excerpt – replace getMyPGs function)
+
+// pg.controller.js (excerpt – replace getMyPGs and add new function)
+
 const getMyPGs = asyncHandler(async (req, res) => {
+  // Original, unchanged: return all owner's PGs
   const PG = require('../models/PG.model');
   const pgs = await PG.find({ owner: req.user._id }).sort({ createdAt: -1 }).lean();
   successResponse(res, 'Your listings retrieved', { pgs });
+});
+
+/**
+ * @route GET /api/v1/pg/my/paginated
+ * Owner's listings with search & pagination
+ */
+const getMyPGsPaginated = asyncHandler(async (req, res) => {
+  const PG = require('../models/PG.model');
+  const { q, page: pageStr, limit: limitStr, status } = req.query;
+
+  const page = Math.max(1, parseInt(pageStr, 10) || 1);
+  const limit = Math.min(50, Math.max(1, parseInt(limitStr, 10) || 12));
+  const skip = (page - 1) * limit;
+
+  const query = { owner: req.user._id };
+
+  if (q && q.trim()) {
+    const cleanSearch = q.trim().replace(/\s+/g, ' ');
+    const searchTerms = cleanSearch.split(' ').filter(Boolean);
+    const safeTerms = searchTerms.map((term) => term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+
+    query.$or = safeTerms.flatMap((term) => [
+      { name: new RegExp(term, 'i') },
+      { area: new RegExp(term, 'i') },
+      { city: new RegExp(term, 'i') },
+      { address: new RegExp(term, 'i') },
+      { description: new RegExp(term, 'i') },
+      { contactPhone: new RegExp(term, 'i') },
+    ]);
+  }
+
+  if (status && ['pending', 'approved', 'rejected'].includes(status)) {
+    query.status = status;
+  }
+
+  const [pgs, total] = await Promise.all([
+    PG.find(query)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean(),
+    PG.countDocuments(query),
+  ]);
+
+  const pagination = {
+    total,
+    page,
+    limit,
+    totalPages: Math.max(1, Math.ceil(total / limit)),
+    hasNext: page * limit < total,
+    hasPrev: page > 1,
+  };
+
+  successResponse(res, 'Your listings retrieved', { pgs, pagination });
 });
 
 /**
@@ -125,4 +192,4 @@ const pgUpdateRequestController = require('./pgUpdateRequest.controller');
 const getMyUpdateRequests = pgUpdateRequestController.getMyUpdateRequests;
 const cancelUpdateRequest = pgUpdateRequestController.cancelUpdateRequest;
 
-module.exports = { getPGs, getPGById, createPG, updatePG, deletePG, getMyPGs, aiSearch, getSuggestions, getMyUpdateRequests, cancelUpdateRequest };
+module.exports = { getPGs, getPGById, createPG, updatePG, deletePG, getMyPGs,getMyPGsPaginated, aiSearch, getSuggestions, getMyUpdateRequests, cancelUpdateRequest };
