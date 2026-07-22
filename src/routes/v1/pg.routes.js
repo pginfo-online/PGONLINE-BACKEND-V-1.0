@@ -11,7 +11,7 @@ router.get('/ai-search', protect, authorize('tenant'), aiSearch);
 router.get('/my', protect, authorize('owner'), getMyPGs);
 router.get('/my/paginated', protect, authorize('owner'), getMyPGsPaginated);
 router.get('/:id', getPGById);
-router.post('/', protect, authorize('owner'), validate(createPGSchema), createPG);
+router.post('/', protect, authorize('owner', 'tenant'), validate(createPGSchema), createPG);
 router.put('/:id', protect, authorize('owner'), validate(updatePGSchema), updatePG);
 router.get('/my/update-requests', protect, authorize('owner'), getMyUpdateRequests);
 router.delete('/my/update-requests/:id', protect, authorize('owner'), cancelUpdateRequest);

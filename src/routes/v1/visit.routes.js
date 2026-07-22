@@ -5,8 +5,8 @@ const { protect, authorize } = require('../../middlewares/auth.middleware');
 const validate = require('../../middlewares/validate.middleware');
 const { createVisitSchema, updateVisitStatusSchema } = require('../../validators/visit.validator');
 
-router.post('/', protect, authorize('tenant'), validate(createVisitSchema), createVisit);
-router.get('/my', protect, authorize('tenant'), getMyVisits);
+router.post('/', protect, authorize('tenant', 'owner'), validate(createVisitSchema), createVisit);
+router.get('/my', protect, authorize('tenant', 'owner'), getMyVisits);
 router.get('/pg/:pgId', protect, authorize('owner'), getPGVisits);
 router.put('/:id/status', protect, authorize('owner'), validate(updateVisitStatusSchema), updateVisitStatus);
 

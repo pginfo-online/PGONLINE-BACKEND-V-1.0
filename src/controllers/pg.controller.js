@@ -83,7 +83,24 @@ const getPGById = asyncHandler(async (req, res) => {
  */
 const createPG = asyncHandler(async (req, res) => {
   const pg = await pgService.createPG(req.user._id, req.body);
-  successResponse(res, 'PG listing created and submitted for approval', { pg }, 201);
+
+  // ─── Auto-upgrade tenant → owner on first PG creation ─────────────────────
+  let updatedUser = null;
+  if (req.user.role === 'tenant') {
+    const User = require('../models/User.model');
+    updatedUser = await User.findByIdAndUpdate(
+      req.user._id,
+      { role: 'owner' },
+      { new: true, runValidators: true }
+    ).select('-password');
+  }
+
+  successResponse(
+    res,
+    'PG listing created and submitted for approval',
+    { pg, ...(updatedUser && { user: updatedUser }) },
+    201
+  );
 });
 
 /**

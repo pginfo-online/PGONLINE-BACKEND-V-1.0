@@ -21,7 +21,7 @@ const pgSchema = new mongoose.Schema(
     city: {
       type: String,
       required: [true, 'City is required'],
-      enum: ['Pune', 'Mumbai', 'Delhi'],
+      enum: ['Pune', 'Mumbai', 'Delhi' , 'Bangalore', 'Chennai', 'Hyderabad', 'Kolkata', 'Jaipur', 'Ahmedabad', 'Other'],
     },
     area: {
       type: String,
