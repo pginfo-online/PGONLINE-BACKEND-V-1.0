@@ -78,16 +78,73 @@ const getPGs = async (params) => {
   if (limit > 50) limit = 50;
   const skip = (page - 1) * limit;
 
-  const [pgs, total] = await Promise.all([
-    PG.find(query)
-      .select('name city area address rent food ac gender photos isVerified isAvailable status owner createdAt')
-      .populate('owner', 'name email phone')
-      .sort(sort)
-      .skip(skip)
-      .limit(limit)
-      .lean(),
-    PG.countDocuments(query),
-  ]);
+  let pgs, total;
+
+  if (params.lat && params.lng) {
+    const lat = parseFloat(params.lat);
+    const lng = parseFloat(params.lng);
+    const radius = parseFloat(params.radius) || 10; // Default 10km
+
+    const geoNearStage = {
+      $geoNear: {
+        near: { type: 'Point', coordinates: [lng, lat] },
+        distanceField: 'distance', // will return distance in meters
+        maxDistance: radius * 1000,
+        query: query,
+        spherical: true
+      }
+    };
+
+    const pipeline = [
+      geoNearStage,
+      // If we are sorting by distance, $geoNear already sorts by distance implicitly unless another sort is specified.
+      // We will only apply $sort if it's not distance sorting. But usually Near Me implies distance sort.
+      ...(params.sort ? [{ $sort: sort }] : []),
+      { $skip: skip },
+      { $limit: limit },
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'owner',
+          foreignField: '_id',
+          as: 'owner'
+        }
+      },
+      { $unwind: { path: '$owner', preserveNullAndEmptyArrays: true } },
+      {
+        $project: {
+          name: 1, city: 1, area: 1, address: 1, rent: 1, food: 1, ac: 1, gender: 1, photos: 1, isVerified: 1, isAvailable: 1, status: 1, createdAt: 1, distance: 1, latitude: 1, longitude: 1, location: 1,
+          'owner._id': 1, 'owner.name': 1, 'owner.email': 1, 'owner.phone': 1
+        }
+      }
+    ];
+
+    const countPipeline = [
+      geoNearStage,
+      { $count: 'total' }
+    ];
+
+    const [aggResult, countResult] = await Promise.all([
+      PG.aggregate(pipeline),
+      PG.aggregate(countPipeline)
+    ]);
+
+    pgs = aggResult;
+    total = countResult.length > 0 ? countResult[0].total : 0;
+  } else {
+    const [findPgs, findTotal] = await Promise.all([
+      PG.find(query)
+        .select('name city area address rent food ac gender photos isVerified isAvailable status owner createdAt latitude longitude location')
+        .populate('owner', 'name email phone')
+        .sort(sort)
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+      PG.countDocuments(query),
+    ]);
+    pgs = findPgs;
+    total = findTotal;
+  }
 
   return {
     pgs,
@@ -147,11 +204,31 @@ const createPG = async (ownerId, data) => {
     throw err;
   }
 
+  let locationData = {};
+  try {
+    const { geocodeAddress } = require('../utils/geocoder');
+    const fullAddress = `${address}, ${area}, ${city}`;
+    const coords = await geocodeAddress(fullAddress);
+    if (coords) {
+      locationData = {
+        latitude: coords.latitude,
+        longitude: coords.longitude,
+        location: {
+          type: 'Point',
+          coordinates: [coords.longitude, coords.latitude]
+        }
+      };
+    }
+  } catch (err) {
+    console.error('Geocoding error in createPG:', err);
+  }
+
   return PG.create({
     ...data,
     name,
     area,
     address,
+    ...locationData,
     owner: ownerId,
     status: 'pending',
   });
@@ -169,6 +246,22 @@ const updatePG = async (pgId, ownerId, data) => {
   }
 
   const originalSnapshot = pg.toObject();
+
+  try {
+    const { geocodeAddress } = require('../utils/geocoder');
+    const fullAddress = `${data.address || pg.address}, ${data.area || pg.area}, ${data.city || pg.city}`;
+    const coords = await geocodeAddress(fullAddress);
+    if (coords) {
+      data.latitude = coords.latitude;
+      data.longitude = coords.longitude;
+      data.location = {
+        type: 'Point',
+        coordinates: [coords.longitude, coords.latitude]
+      };
+    }
+  } catch (err) {
+    console.error('Geocoding error in updatePG:', err);
+  }
 
   // Cancel any existing pending or correction_required requests for this PG
   await PGUpdateRequest.updateMany(

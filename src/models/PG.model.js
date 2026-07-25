@@ -39,6 +39,17 @@ const pgSchema = new mongoose.Schema(
     },
     latitude: { type: Number },
     longitude: { type: Number },
+    location: {
+      type: {
+        type: String,
+        enum: ['Point'],
+        default: 'Point',
+      },
+      coordinates: {
+        type: [Number], // [longitude, latitude]
+        default: [0, 0],
+      },
+    },
     rent: {
       single: { type: Number, min: 0 },
       double: { type: Number, min: 0 },
@@ -134,5 +145,7 @@ pgSchema.index({ 'rent.single': 1, 'rent.double': 1 });
 pgSchema.index({ food: 1, ac: 1 });
 // Text index for search
 pgSchema.index({ name: 'text', area: 'text', city: 'text', description: 'text' });
+// Geospatial index for distance searches
+pgSchema.index({ location: '2dsphere' });
 
 module.exports = mongoose.model('PG', pgSchema);

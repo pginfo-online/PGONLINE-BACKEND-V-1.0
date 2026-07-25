@@ -48,7 +48,7 @@ const createPGSchema = z.object({
 const updatePGSchema = createPGSchema.partial();
 
 const pgSearchSchema = z.object({
-  city: z.enum(['Pune', 'Mumbai', 'Delhi']).optional(),
+  city: z.enum(['Pune', 'Mumbai', 'Delhi' , 'Bangalore', 'Chennai', 'Hyderabad', 'Kolkata', 'Jaipur', 'Ahmedabad', 'Other']).optional(),
   area: z.string().optional(),
   q: z.string().optional(),
   food: z.enum(['veg', 'nonveg', 'both', 'none']).optional(),
