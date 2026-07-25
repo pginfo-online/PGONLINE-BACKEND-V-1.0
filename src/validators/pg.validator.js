@@ -10,7 +10,7 @@ const nullableCoercedNumber = z.preprocess((val) => {
 const createPGSchema = z.object({
   name: z.string().min(3, 'PG name must be at least 3 characters').max(200),
   description: z.string().max(1000).optional(),
-  city: z.enum(['Pune', 'Mumbai', 'Delhi'], { required_error: 'City is required' }),
+  city: z.enum(['Pune', 'Mumbai', 'Delhi' , 'Bangalore', 'Chennai', 'Hyderabad', 'Kolkata', 'Jaipur', 'Ahmedabad', 'Other'], { required_error: 'City is required' }),
   area: z.string().min(2, 'Area is required').max(100),
   address: z.string().min(5, 'Address is required').max(500),
   mapsLink: z.string().url('Enter a valid Google Maps URL').optional().or(z.literal('')),
