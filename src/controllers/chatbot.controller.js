@@ -1,53 +1,27 @@
-const fs = require('fs/promises');
 const asyncHandler = require('../utils/asyncHandler');
 const { successResponse } = require('../utils/apiResponse');
 const chatbotService = require('../services/chatbot.service');
-const { uploadToCloudinary } = require('../config/cloudinary');
 
 /**
  * POST /api/v1/pg/chat/message
- * Body: { message: string } – multipart optional with files
+ * Body: { message: string }
  */
 const sendMessage = asyncHandler(async (req, res) => {
   const userId = req.user._id;
   const message = req.body.message || '';
 
-  let uploadedImages = [];
-  if (req.files && req.files.length > 0) {
-    uploadedImages = await Promise.all(
-      req.files.map(async (file) => {
-        let buffer;
-        if (file.buffer) {
-          buffer = file.buffer;
-        } else if (file.path) {
-          buffer = await fs.readFile(file.path);
-        } else {
-          return null;
-        }
-
-        const result = await uploadToCloudinary(buffer, 'pg_chat_temp', 'image');
-        return {
-          url: result.secure_url,
-          publicId: result.public_id,
-        };
-      })
-    );
-
-    uploadedImages = uploadedImages.filter(Boolean);
-  }
-
-  const result = await chatbotService.processMessage(userId, message, uploadedImages);
+  const result = await chatbotService.processMessage(userId, message);
   successResponse(res, 'Message processed', result);
 });
 
 /**
  * POST /api/v1/pg/chat/finalize
- * Body: { conversationId }
+ * Body: { conversationId, listingData: optional overrides }
  */
 const finalizeListing = asyncHandler(async (req, res) => {
-  const { conversationId } = req.body;
+  const { conversationId, listingData } = req.body;
   const userId = req.user._id;
-  const pg = await chatbotService.finalizeListing(userId, conversationId);
+  const pg = await chatbotService.finalizeListing(userId, conversationId, listingData);
   successResponse(res, 'PG listing created successfully', { pg });
 });
 

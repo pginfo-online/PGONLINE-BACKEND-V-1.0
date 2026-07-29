@@ -51,19 +51,15 @@ const startNewConversation = async (userId) => {
 /**
  * Process a new user message within an existing conversation.
  */
-const processMessage = async (userId, messageText = '', uploadedImages = []) => {
+const processMessage = async (userId, messageText = '') => {
   const conv = await getOrCreateConversation(userId);
   const trimmedMessage = typeof messageText === 'string' ? messageText.trim() : '';
 
-  if (trimmedMessage || uploadedImages.length) {
+  if (trimmedMessage) {
     conv.messages.push({
       role: 'user',
-      content: trimmedMessage || (uploadedImages.length ? '📷 Uploaded images' : 'Started chat'),
+      content: trimmedMessage,
     });
-  }
-
-  if (uploadedImages.length) {
-    conv.images.push(...uploadedImages);
   }
 
   const llmResponse = await callLLM(conv);
@@ -86,9 +82,6 @@ const processMessage = async (userId, messageText = '', uploadedImages = []) => 
   if (missingMandatory.length === 0) {
     conv.currentStep = 'confirm_submission';
     assistantText += ' Great! Your listing looks ready. You can submit it now.';
-  } else if (conv.images.length === 0) {
-    conv.currentStep = 'awaiting_images';
-    assistantText += ' Please upload a few clear photos of the PG so I can complete the listing.';
   } else {
     conv.currentStep = 'collecting_details';
   }
@@ -100,7 +93,7 @@ const processMessage = async (userId, messageText = '', uploadedImages = []) => 
     message: assistantText,
     listingData: conv.listingData,
     missingFields: missingMandatory,
-    images: conv.images,
+    images: [],
     currentStep: conv.currentStep,
     conversationId: conv._id,
   };
@@ -109,9 +102,13 @@ const processMessage = async (userId, messageText = '', uploadedImages = []) => 
 /**
  * Finalize and create the PG listing from accumulated data.
  */
-const finalizeListing = async (userId, conversationId) => {
+const finalizeListing = async (userId, conversationId, updatedListingData) => {
   const conv = await Conversation.findOne({ _id: conversationId, user: userId, status: 'active' });
   if (!conv) throw new Error('Conversation not found');
+
+  if (updatedListingData) {
+    conv.listingData = deepMerge(conv.listingData || {}, updatedListingData);
+  }
 
   const normalizedData = normalizeListingData(conv.listingData || {});
   const report = runQualityChecks(normalizedData);
@@ -122,11 +119,6 @@ const finalizeListing = async (userId, conversationId) => {
 
   const pgService = require('./pg.service');
   const pg = await pgService.createPG(userId, normalizedData);
-
-  if (conv.images.length) {
-    pg.photos = conv.images.map((img) => ({ url: img.url, publicId: img.publicId, isMain: false }));
-    await pg.save();
-  }
 
   conv.status = 'completed';
   conv.currentStep = 'completed';
