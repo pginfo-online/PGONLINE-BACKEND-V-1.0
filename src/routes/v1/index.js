@@ -9,9 +9,11 @@ const adminRoutes = require('./admin.routes');
 const uploadRoutes = require('./upload.routes');
 const meetupRoutes = require('./meetup.routes');
 const appVersionRoutes = require('./appVersion.routes');
+const chatbotRoutes = require('./chatbot.routes');  // Import the chatbot routes
 
 
 router.use('/auth', authRoutes);
+router.use('/pg/chat', chatbotRoutes);  // Added chatbot routes under /pg/chat
 router.use('/pg', pgRoutes);
 router.use('/lead', leadRoutes);
 router.use('/visit', visitRoutes);

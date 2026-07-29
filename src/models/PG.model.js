@@ -21,7 +21,7 @@ const pgSchema = new mongoose.Schema(
     city: {
       type: String,
       required: [true, 'City is required'],
-      enum: ['Pune', 'Mumbai', 'Delhi' , 'Bangalore', 'Chennai', 'Hyderabad', 'Kolkata', 'Jaipur', 'Ahmedabad', 'Other'],
+      enum: ['Pune', 'Mumbai', 'Delhi', 'Bangalore', 'Chennai', 'Hyderabad', 'Kolkata', 'Jaipur', 'Ahmedabad', 'Other'],
     },
     area: {
       type: String,
@@ -73,6 +73,9 @@ const pgSchema = new mongoose.Schema(
       enum: ['male', 'female', 'any'],
       default: 'any',
     },
+
+    floors: { type: Number, min: 1 },
+    totalBeds: { type: Number, min: 1 },
     facilities: {
       type: [String],
       default: [],
