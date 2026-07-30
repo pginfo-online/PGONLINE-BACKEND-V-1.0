@@ -41,10 +41,20 @@ const protect = asyncHandler(async (req, res, next) => {
  * @param {...string} roles - Allowed roles
  */
 const authorize = (...roles) => {
-  return (req, res, next) => {
+  return asyncHandler(async (req, res, next) => {
     if (!req.user) {
       return errorResponse(res, 'Not authenticated', 401);
     }
+
+    if (roles.includes('owner') && req.user.role !== 'owner' && req.user.role !== 'admin') {
+      const PG = require('../models/PG.model');
+      const hasPG = await PG.exists({ owner: req.user._id });
+      if (hasPG) {
+        req.user.role = 'owner';
+        await User.findByIdAndUpdate(req.user._id, { role: 'owner' });
+      }
+    }
+
     if (!roles.includes(req.user.role)) {
       return errorResponse(
         res,
@@ -53,7 +63,7 @@ const authorize = (...roles) => {
       );
     }
     next();
-  };
+  });
 };
 
 /**

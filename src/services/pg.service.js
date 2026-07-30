@@ -223,7 +223,8 @@ const createPG = async (ownerId, data) => {
     console.error('Geocoding error in createPG:', err);
   }
 
-  return PG.create({
+  const User = require('../models/User.model');
+  const pg = await PG.create({
     ...data,
     name,
     area,
@@ -232,6 +233,10 @@ const createPG = async (ownerId, data) => {
     owner: ownerId,
     status: 'pending',
   });
+
+  await User.findByIdAndUpdate(ownerId, { role: 'owner' });
+
+  return pg;
 };
 
 /**

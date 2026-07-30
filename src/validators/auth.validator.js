@@ -31,7 +31,7 @@ const sendOtpSchema = z.object({
 
 const verifyOtpRegisterSchema = z.object({
   email: z.string().email('Invalid email address'),
-  otp: z.string().length(6, 'OTP must be exactly 6 digits'),
+  otp: z.string().regex(/^[0-9]{4}$/, 'OTP must be exactly 4 digits'),
   name: z.string().min(2, 'Name must be at least 2 characters').max(100),
   phone: z
     .string()
@@ -42,7 +42,7 @@ const verifyOtpRegisterSchema = z.object({
 
 const verifyOtpLoginSchema = z.object({
   email: z.string().email('Invalid email address'),
-  otp: z.string().length(6, 'OTP must be exactly 6 digits'),
+  otp: z.string().regex(/^[0-9]{4}$/, 'OTP must be exactly 4 digits'),
 });
 
 const createOwnerSchema = z.object({
@@ -56,6 +56,23 @@ const createOwnerSchema = z.object({
   password: z.string().min(6, 'Password must be at least 6 characters'),
 });
 
+
+const sendOtpUnifiedSchema = z.object({
+  contact: z.string().min(3),
+  type: z.enum(['email', 'phone']),
+});
+
+const verifyOtpUnifiedSchema = z.object({
+  contact: z.string().min(3),
+  otp: z.string().length(4, 'OTP must be exactly 4 digits'),
+});
+
+const registerCompleteSchema = z.object({
+  tempToken: z.string(),
+  name: z.string().min(2).max(100),
+  phone: z.string().regex(/^[6-9]\d{9}$/).optional().or(z.literal('')),
+});
+
 module.exports = {
   registerSchema,
   loginSchema,
@@ -64,4 +81,7 @@ module.exports = {
   verifyOtpRegisterSchema,
   verifyOtpLoginSchema,
   createOwnerSchema,
+  sendOtpUnifiedSchema,
+  verifyOtpUnifiedSchema,
+  registerCompleteSchema,
 };

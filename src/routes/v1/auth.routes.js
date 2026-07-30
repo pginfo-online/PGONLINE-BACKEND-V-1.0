@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const {
   register, login, getMe, updateMe,
-  sendOtp, verifyOtpRegister, verifyOtpLogin,
+  sendOtp, verifyOtpRegister, verifyOtpLogin, sendOtpUnified, verifyOtpUnified, registerComplete
 } = require('../../controllers/auth.controller');
 const { protect } = require('../../middlewares/auth.middleware');
 const validate = require('../../middlewares/validate.middleware');
@@ -13,6 +13,9 @@ const {
   sendOtpSchema,
   verifyOtpRegisterSchema,
   verifyOtpLoginSchema,
+  sendOtpUnifiedSchema,
+  verifyOtpUnifiedSchema,
+  registerCompleteSchema
 } = require('../../validators/auth.validator');
 
 // ─── Standard Auth Routes (unchanged) ────────────────────────────────────────
@@ -20,6 +23,14 @@ router.post('/register', validate(registerSchema), register);
 router.post('/login', validate(loginSchema), login);
 router.get('/me', protect, getMe);
 router.put('/me', protect, validate(updateProfileSchema), updateMe);
+
+
+// ... existing routes
+router.post('/otp/send-unified', validate(sendOtpUnifiedSchema), sendOtpUnified);
+router.post('/otp/verify-unified', validate(verifyOtpUnifiedSchema), verifyOtpUnified);
+router.post('/register-complete', validate(registerCompleteSchema), registerComplete);
+
+
 
 // ─── OTP Auth Routes (Mobile Tenant Users Only) ───────────────────────────────
 router.post('/otp/send', validate(sendOtpSchema), sendOtp);
