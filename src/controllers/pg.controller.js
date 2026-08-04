@@ -36,14 +36,15 @@ const aiSearch = asyncHandler(async (req, res) => {
 Return ONLY a raw valid JSON object. Do NOT wrap it in markdown code blocks (\`\`\`json). Do NOT provide any explanations.
 Valid JSON fields (all optional):
 - city: "Pune" | "Mumbai" | "Delhi" (or other city string)
-- area: string (locality name)
+- area: string (locality name, e.g., "Hinjewadi", "Wakad")
 - maxRent: number (e.g. if user says "15k" or "under 15000", return 15000)
 - minRent: number
 - food: "veg" | "nonveg" | "both" | "none"
 - foodIncluded: boolean (true if food is mentioned)
 - ac: boolean
 - gender: "male" | "female" | "any"
-- sharingType: "single" | "double" | "triple"`,
+- sharingType: "single" | "double" | "triple" | "four"
+- propertyType: "PG" | "Hostel" | "Co-living" | "Apartment" | "Independent House"`,
           },
           { role: 'user', content: q },
         ],
@@ -64,6 +65,23 @@ Valid JSON fields (all optional):
   } else {
     // Graceful fallback: keyword search
     intentParams = { q };
+  }
+
+  // If area or city is identified, try to geocode it to use radius search
+  if (intentParams.area || intentParams.city) {
+    try {
+      const { geocodeAddress } = require('../utils/geocoder');
+      const locationString = `${intentParams.area || ''} ${intentParams.city || ''}`.trim();
+      const coords = await geocodeAddress(locationString);
+      if (coords) {
+        intentParams.lat = coords.latitude;
+        intentParams.lng = coords.longitude;
+        intentParams.radius = 15; // 15 km radius for AI search
+        // delete intentParams.area; // optionally remove area string search
+      }
+    } catch (e) {
+      console.error('AI Geocoding error:', e);
+    }
   }
 
   const pgs = await pgService.aiSearchPGs(intentParams);

@@ -7,22 +7,30 @@ const SYSTEM_PROMPT = `You are a PG listing assistant for PgInfo.Online. Your jo
 Always respond with a JSON object with these keys:
 - "intent": one of "create_listing", "update_listing", "general_query"
 - "extracted": an object containing any PG fields you can extract. Follow this schema:
-  {
     "name": "string (PG name)",
     "description": "string",
     "city": "string (e.g., Pune, Mumbai)",
     "area": "string (locality)",
     "address": "string",
+    "landmark": "string",
+    "postalCode": "string",
+    "propertyType": "string (PG/Hostel/Co-living)",
+    "propertyAge": "number",
+    "totalRooms": "number",
     "floors": "number",
     "totalBeds": "number",
+    "availableBeds": "number",
     "genderPreference": "male/female/any",
-    "amenities": ["wifi", "food", "parking", ...],
+    "amenities": ["wifi", "food", "parking"],
     "contactPhone": "string",
     "contactWhatsapp": "string",
     "food": "veg/nonveg/both/none",
     "foodIncluded": "boolean",
     "ac": "boolean",
-    "availableRooms": "number"
+    "securityDeposit": "number",
+    "noticePeriod": "number",
+    "roomConfigs": [{"shareType": "single/double/triple/four", "rent": "number", "totalBeds": "number", "availableBeds": "number"}],
+    "nearbyPlaces": [{"placeType": "college/metro/hospital/it_park", "name": "string", "distance": "number (in km)"}]
   }
 - "followUpQuestion": a short question to ask for the next missing mandatory field or clarification (if needed). Omit if everything is clear and user seems ready to submit.
 - "confidence": number between 0 and 1 indicating how sure you are about the extracted data.
@@ -208,12 +216,13 @@ const normalizeListingData = (data = {}) => {
     triple: normalizeNumber(normalized.rent?.triple),
   };
 
-  const roomTypes = Array.isArray(normalized.roomTypes) ? normalized.roomTypes : [];
-  if (roomTypes.length) {
-    rent.single = rent.single ?? normalizeNumber(roomTypes.find((r) => r.sharing === 'single')?.rent);
-    rent.double = rent.double ?? normalizeNumber(roomTypes.find((r) => r.sharing === 'double')?.rent);
-    rent.triple = rent.triple ?? normalizeNumber(roomTypes.find((r) => r.sharing === 'triple')?.rent);
+  const roomConfigs = Array.isArray(normalized.roomConfigs) ? normalized.roomConfigs : (Array.isArray(normalized.roomTypes) ? normalized.roomTypes.map(r => ({ shareType: r.sharing, rent: r.rent })) : []);
+  if (roomConfigs.length) {
+    rent.single = rent.single ?? normalizeNumber(roomConfigs.find((r) => r.shareType === 'single')?.rent);
+    rent.double = rent.double ?? normalizeNumber(roomConfigs.find((r) => r.shareType === 'double')?.rent);
+    rent.triple = rent.triple ?? normalizeNumber(roomConfigs.find((r) => r.shareType === 'triple')?.rent);
   }
+  normalized.roomConfigs = roomConfigs;
 
   normalized.rent = rent;
   normalized.facilities = normalizeFacilities(normalized.facilities || normalized.amenities || []);
@@ -275,7 +284,7 @@ const normalizeFacilities = (values = []) => {
 const runQualityChecks = (data) => {
   const mandatory = ['name', 'city', 'area', 'address', 'contactPhone'];
   const missingMandatory = mandatory.filter((field) => !data[field]);
-  const hasRent = data.rent?.single || data.rent?.double || data.rent?.triple;
+  const hasRent = data.rent?.single || data.rent?.double || data.rent?.triple || (data.roomConfigs && data.roomConfigs.length > 0);
   if (!hasRent) missingMandatory.push('rent (at least one sharing type)');
   const contradictions = detectContradictions(data);
   return { missingMandatory, contradictions };
@@ -308,8 +317,10 @@ const formatListingSummary = (data) => {
   if (data.totalBeds) parts.push(`**Total Beds:** ${data.totalBeds}`);
   if (data.genderPreference || data.gender) parts.push(`**Gender:** ${data.genderPreference || data.gender}`);
   const rents = [];
-  if (data.roomTypes) data.roomTypes.forEach((r) => rents.push(`${r.sharing}: ₹${r.rent}`));
+  if (data.roomConfigs) data.roomConfigs.forEach((r) => rents.push(`${r.shareType}: ₹${r.rent}`));
+  else if (data.roomTypes) data.roomTypes.forEach((r) => rents.push(`${r.sharing}: ₹${r.rent}`));
   if (rents.length) parts.push(`**Rents:** ${rents.join(' | ')}`);
+  if (data.nearbyPlaces?.length) parts.push(`**Nearby:** ${data.nearbyPlaces.map(p => p.name).join(', ')}`);
   if (data.amenities?.length || data.facilities?.length) parts.push(`**Amenities:** ${(data.amenities || data.facilities || []).join(', ')}`);
   return parts.join('\n');
 };

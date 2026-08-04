@@ -14,11 +14,12 @@ const buildSearchQuery = (params) => {
   if (params.gender) query.gender = { $in: [params.gender, 'any'] };
   if (params.isVerified !== undefined) query.isVerified = params.isVerified === 'true';
 
-  // Rent range filter
-  if (params.minRent !== undefined || params.maxRent !== undefined) {
+  // Property type
+  if (params.propertyType) query.propertyType = params.propertyType;
+
+  // Rent range and sharing type filter
+  if (params.minRent !== undefined || params.maxRent !== undefined || params.sharingType) {
     const rentCondition = {};
-    
-    // Parse numeric values safely
     const parseRent = (val) => {
       if (typeof val === 'number') return val;
       if (typeof val === 'string') {
@@ -30,18 +31,33 @@ const buildSearchQuery = (params) => {
 
     const min = parseRent(params.minRent);
     const max = parseRent(params.maxRent);
-
     if (min !== undefined) rentCondition.$gte = min;
     if (max !== undefined) rentCondition.$lte = max;
 
-    if (params.sharingType === 'single') query['rent.single'] = rentCondition;
-    else if (params.sharingType === 'double') query['rent.double'] = rentCondition;
-    else if (params.sharingType === 'triple') query['rent.triple'] = rentCondition;
-    else {
+    const hasRentBounds = min !== undefined || max !== undefined;
+    const shareMatch = params.sharingType ? { shareType: params.sharingType, ...(hasRentBounds ? { rent: rentCondition } : {}) } : { rent: rentCondition };
+
+    if (params.sharingType && ['single', 'double', 'triple'].includes(params.sharingType)) {
+      const legacyKey = `rent.${params.sharingType}`;
+      if (hasRentBounds) {
+        query.$or = [
+          { [legacyKey]: rentCondition },
+          { roomConfigs: { $elemMatch: shareMatch } }
+        ];
+      } else {
+        query.$or = [
+          { [legacyKey]: { $exists: true, $ne: null } },
+          { roomConfigs: { $elemMatch: shareMatch } }
+        ];
+      }
+    } else {
       query.$or = [
-        { 'rent.single': rentCondition },
-        { 'rent.double': rentCondition },
-        { 'rent.triple': rentCondition },
+        ...(hasRentBounds ? [
+          { 'rent.single': rentCondition },
+          { 'rent.double': rentCondition },
+          { 'rent.triple': rentCondition }
+        ] : []),
+        { roomConfigs: { $elemMatch: shareMatch } }
       ];
     }
   }
@@ -59,9 +75,10 @@ const buildSearchQuery = (params) => {
  */
 const buildSort = (sort) => {
   switch (sort) {
-    case 'rent_asc': return { 'rent.single': 1 };
-    case 'rent_desc': return { 'rent.single': -1 };
+    case 'rent_asc': return { 'rent.single': 1, 'roomConfigs.rent': 1 };
+    case 'rent_desc': return { 'rent.single': -1, 'roomConfigs.rent': -1 };
     case 'popular': return { views: -1, inquiries: -1 };
+    case 'distance': return null; // handled implicitly by $geoNear
     default: return { createdAt: -1 };
   }
 };
@@ -98,8 +115,8 @@ const getPGs = async (params) => {
     const pipeline = [
       geoNearStage,
       // If we are sorting by distance, $geoNear already sorts by distance implicitly unless another sort is specified.
-      // We will only apply $sort if it's not distance sorting. But usually Near Me implies distance sort.
-      ...(params.sort ? [{ $sort: sort }] : []),
+      // We will only apply $sort if it's not distance sorting.
+      ...(sort ? [{ $sort: sort }] : []),
       { $skip: skip },
       { $limit: limit },
       {
@@ -216,8 +233,15 @@ const createPG = async (ownerId, data) => {
         location: {
           type: 'Point',
           coordinates: [coords.longitude, coords.latitude]
-        }
+        },
+        fullAddress: coords.fullAddress,
+        postalCode: coords.postalCode,
+        country: coords.country,
+        state: coords.state,
+        district: coords.district,
+        googlePlaceId: coords.placeId,
       };
+      if (!city && coords.city) locationData.city = coords.city;
     }
   } catch (err) {
     console.error('Geocoding error in createPG:', err);
@@ -263,6 +287,12 @@ const updatePG = async (pgId, ownerId, data) => {
         type: 'Point',
         coordinates: [coords.longitude, coords.latitude]
       };
+      if (coords.fullAddress) data.fullAddress = coords.fullAddress;
+      if (coords.postalCode) data.postalCode = coords.postalCode;
+      if (coords.country) data.country = coords.country;
+      if (coords.state) data.state = coords.state;
+      if (coords.district) data.district = coords.district;
+      if (coords.placeId) data.googlePlaceId = coords.placeId;
     }
   } catch (err) {
     console.error('Geocoding error in updatePG:', err);
@@ -332,15 +362,18 @@ const getSuggestions = async (query) => {
 
   const regex = new RegExp(query, 'i');
 
-  // Search by name and area
+  // Search by name, area, landmark, fullAddress
   const pgs = await PG.find({
     $or: [
       { name: regex },
-      { area: regex }
+      { area: regex },
+      { fullAddress: regex },
+      { landmark: regex },
+      { 'nearbyPlaces.name': regex }
     ],
     status: 'approved'
   })
-    .select('name area city')
+    .select('name area city fullAddress landmark nearbyPlaces')
     .limit(10)
     .lean();
 
@@ -361,7 +394,36 @@ const getSuggestions = async (query) => {
         suggestionsMap.set(key, { text: pg.name, type: 'pg_name', pgId: pg._id });
       }
     }
+    if (pg.landmark && regex.test(pg.landmark)) {
+      const key = `landmark:${pg.landmark}`;
+      if (!suggestionsMap.has(key)) {
+        suggestionsMap.set(key, { text: pg.landmark, type: 'landmark', city: pg.city });
+      }
+    }
   });
+
+  // Add Google Places Autocomplete if configured
+  const googleApiKey = process.env.GOOGLE_MAPS_API_KEY;
+  if (googleApiKey) {
+    try {
+      const axios = require('axios');
+      const response = await axios.get('https://maps.googleapis.com/maps/api/place/autocomplete/json', {
+        params: { input: query, key: googleApiKey, components: 'country:in' },
+        timeout: 2500
+      });
+      if (response.data && response.data.predictions) {
+        response.data.predictions.forEach(pred => {
+          suggestionsMap.set(`google:${pred.place_id}`, {
+            text: pred.description,
+            type: 'google_place',
+            placeId: pred.place_id
+          });
+        });
+      }
+    } catch (e) {
+      console.error('Places Autocomplete Error:', e.message);
+    }
+  }
 
   return { suggestions: Array.from(suggestionsMap.values()).slice(0, 10) };
 };

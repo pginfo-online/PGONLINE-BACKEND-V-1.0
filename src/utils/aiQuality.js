@@ -2,7 +2,7 @@ const MANDATORY_FIELDS = ['name', 'city', 'area', 'address', 'contactPhone'];
 
 const getMissingFields = (data) => {
   const missing = MANDATORY_FIELDS.filter(f => !data[f]);
-  const hasRent = data.rent?.single || data.rent?.double || data.rent?.triple;
+  const hasRent = data.rent?.single || data.rent?.double || data.rent?.triple || (data.roomConfigs && data.roomConfigs.length > 0);
   if (!hasRent) missing.push('rent (at least one sharing type)');
   return missing;
 };

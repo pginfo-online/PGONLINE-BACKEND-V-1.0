@@ -21,7 +21,7 @@ const pgSchema = new mongoose.Schema(
     city: {
       type: String,
       required: [true, 'City is required'],
-      enum: ['Pune', 'Mumbai', 'Delhi', 'Bangalore', 'Chennai', 'Hyderabad', 'Kolkata', 'Jaipur', 'Ahmedabad', 'Other'],
+      trim: true,
     },
     area: {
       type: String,
@@ -37,6 +37,13 @@ const pgSchema = new mongoose.Schema(
       type: String,
       trim: true,
     },
+    fullAddress: { type: String, trim: true },
+    landmark: { type: String, trim: true },
+    district: { type: String, trim: true },
+    state: { type: String, trim: true },
+    country: { type: String, trim: true, default: 'India' },
+    postalCode: { type: String, trim: true },
+    googlePlaceId: { type: String, trim: true },
     latitude: { type: Number },
     longitude: { type: Number },
     location: {
@@ -55,6 +62,26 @@ const pgSchema = new mongoose.Schema(
       double: { type: Number, min: 0 },
       triple: { type: Number, min: 0 },
     },
+    propertyType: {
+      type: String,
+      enum: ['PG', 'Hostel', 'Co-living', 'Apartment', 'Independent House', 'Other'],
+      default: 'PG',
+    },
+    propertyAge: { type: Number, min: 0 },
+    securityDeposit: { type: Number, min: 0 },
+    noticePeriod: { type: Number, min: 0 }, // in days
+    minStay: { type: Number, min: 0 }, // in days
+    maxStay: { type: Number, min: 0 }, // in days
+    yearlyPricing: { type: Number, min: 0 },
+    monthlyPricing: { type: Number, min: 0 },
+    roomConfigs: [
+      {
+        shareType: { type: String, enum: ['single', 'double', 'triple', 'four'] },
+        rent: { type: Number, min: 0 },
+        totalBeds: { type: Number, min: 0 },
+        availableBeds: { type: Number, min: 0 },
+      }
+    ],
     food: {
       type: String,
       enum: ['veg', 'nonveg', 'both', 'none'],
@@ -75,7 +102,9 @@ const pgSchema = new mongoose.Schema(
     },
 
     floors: { type: Number, min: 1 },
+    totalRooms: { type: Number, min: 1 },
     totalBeds: { type: Number, min: 1 },
+    availableBeds: { type: Number, min: 0 },
     facilities: {
       type: [String],
       default: [],
@@ -127,6 +156,16 @@ const pgSchema = new mongoose.Schema(
       default: 0,
       min: 0,
     },
+    nearbyPlaces: [
+      {
+        placeType: {
+          type: String,
+          enum: ['college', 'metro', 'bus_stop', 'hospital', 'it_park', 'railway_station', 'shopping_mall', 'restaurant', 'other'],
+        },
+        name: { type: String },
+        distance: { type: Number }, // distance in km
+      }
+    ],
     // Analytics
     views: { type: Number, default: 0 },
     inquiries: { type: Number, default: 0 },

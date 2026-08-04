@@ -10,15 +10,38 @@ const nullableCoercedNumber = z.preprocess((val) => {
 const createPGSchema = z.object({
   name: z.string().min(3, 'PG name must be at least 3 characters').max(200),
   description: z.string().max(1000).optional(),
-  city: z.enum(['Pune', 'Mumbai', 'Delhi' , 'Bangalore', 'Chennai', 'Hyderabad', 'Kolkata', 'Jaipur', 'Ahmedabad', 'Other'], { required_error: 'City is required' }),
+  city: z.string().min(2, 'City is required').max(100),
   area: z.string().min(2, 'Area is required').max(100),
   address: z.string().min(5, 'Address is required').max(500),
+  fullAddress: z.string().optional(),
+  landmark: z.string().optional(),
+  district: z.string().optional(),
+  state: z.string().optional(),
+  country: z.string().optional(),
+  postalCode: z.string().optional(),
+  googlePlaceId: z.string().optional(),
+  latitude: z.coerce.number().optional(),
+  longitude: z.coerce.number().optional(),
   mapsLink: z.string().url('Enter a valid Google Maps URL').optional().or(z.literal('')),
   rent: z.object({
     single: nullableCoercedNumber,
     double: nullableCoercedNumber,
     triple: nullableCoercedNumber,
   }).optional(),
+  propertyType: z.enum(['PG', 'Hostel', 'Co-living', 'Apartment', 'Independent House', 'Other']).optional(),
+  propertyAge: nullableCoercedNumber,
+  securityDeposit: nullableCoercedNumber,
+  noticePeriod: nullableCoercedNumber,
+  minStay: nullableCoercedNumber,
+  maxStay: nullableCoercedNumber,
+  yearlyPricing: nullableCoercedNumber,
+  monthlyPricing: nullableCoercedNumber,
+  roomConfigs: z.array(z.object({
+    shareType: z.enum(['single', 'double', 'triple', 'four']),
+    rent: z.coerce.number().min(0),
+    totalBeds: nullableCoercedNumber,
+    availableBeds: nullableCoercedNumber,
+  })).optional(),
   food: z.enum(['veg', 'nonveg', 'both', 'none']).default('none'),
   foodIncluded: z.coerce.boolean().default(false),
   ac: z.coerce.boolean().default(false),
@@ -28,6 +51,11 @@ const createPGSchema = z.object({
   contactWhatsapp: z.string().regex(/^[6-9]\d{9}$/).optional().or(z.literal('')),
   isAvailable: z.coerce.boolean().default(true),
   availableRooms: nullableCoercedNumber,
+  nearbyPlaces: z.array(z.object({
+    placeType: z.enum(['college', 'metro', 'bus_stop', 'hospital', 'it_park', 'railway_station', 'shopping_mall', 'restaurant', 'other']),
+    name: z.string(),
+    distance: z.coerce.number(),
+  })).optional(),
   photos: z.array(
     z.object({
       url: z.string().url('Enter a valid photo URL'),
@@ -48,7 +76,7 @@ const createPGSchema = z.object({
 const updatePGSchema = createPGSchema.partial();
 
 const pgSearchSchema = z.object({
-  city: z.enum(['Pune', 'Mumbai', 'Delhi' , 'Bangalore', 'Chennai', 'Hyderabad', 'Kolkata', 'Jaipur', 'Ahmedabad', 'Other']).optional(),
+  city: z.string().optional(),
   area: z.string().optional(),
   q: z.string().optional(),
   food: z.enum(['veg', 'nonveg', 'both', 'none']).optional(),
@@ -56,11 +84,15 @@ const pgSearchSchema = z.object({
   gender: z.enum(['male', 'female', 'any']).optional(),
   minRent: z.coerce.number().min(0).optional(),
   maxRent: z.coerce.number().min(0).optional(),
-  sharingType: z.enum(['single', 'double', 'triple']).optional(),
+  sharingType: z.enum(['single', 'double', 'triple', 'four']).optional(),
+  propertyType: z.string().optional(),
   isVerified: z.enum(['true', 'false']).optional(),
+  lat: z.coerce.number().optional(),
+  lng: z.coerce.number().optional(),
+  radius: z.coerce.number().optional(),
   page: z.coerce.number().min(1).default(1),
   limit: z.coerce.number().min(1).max(50).default(12),
-  sort: z.enum(['newest', 'rent_asc', 'rent_desc', 'popular']).default('newest'),
+  sort: z.enum(['newest', 'rent_asc', 'rent_desc', 'popular', 'distance']).default('newest'),
 });
 
 module.exports = { createPGSchema, updatePGSchema, pgSearchSchema };
