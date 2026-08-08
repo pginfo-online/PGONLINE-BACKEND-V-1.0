@@ -190,4 +190,39 @@ pgSchema.index({ name: 'text', area: 'text', city: 'text', description: 'text' }
 // Geospatial index for distance searches
 pgSchema.index({ location: '2dsphere' });
 
+// ─── Pre-save Hook to Synchronize Rent & RoomConfigs ───────────────────────
+pgSchema.pre('save', function (next) {
+  // 1. If roomConfigs is present and not empty, sync roomConfigs -> rent
+  if (this.roomConfigs && this.roomConfigs.length > 0) {
+    if (!this.rent) {
+      this.rent = {};
+    }
+    const singleConfig = this.roomConfigs.find(rc => rc.shareType === 'single');
+    const doubleConfig = this.roomConfigs.find(rc => rc.shareType === 'double');
+    const tripleConfig = this.roomConfigs.find(rc => rc.shareType === 'triple');
+
+    this.rent.single = singleConfig && typeof singleConfig.rent === 'number' ? singleConfig.rent : undefined;
+    this.rent.double = doubleConfig && typeof doubleConfig.rent === 'number' ? doubleConfig.rent : undefined;
+    this.rent.triple = tripleConfig && typeof tripleConfig.rent === 'number' ? tripleConfig.rent : undefined;
+  }
+  // 2. Otherwise, if rent object is present and has values, sync rent -> roomConfigs
+  else if (this.rent && (this.rent.single != null || this.rent.double != null || this.rent.triple != null)) {
+    const configs = [];
+    if (this.rent.single != null && this.rent.single > 0) {
+      configs.push({ shareType: 'single', rent: this.rent.single, totalBeds: 0, availableBeds: 0 });
+    }
+    if (this.rent.double != null && this.rent.double > 0) {
+      configs.push({ shareType: 'double', rent: this.rent.double, totalBeds: 0, availableBeds: 0 });
+    }
+    if (this.rent.triple != null && this.rent.triple > 0) {
+      configs.push({ shareType: 'triple', rent: this.rent.triple, totalBeds: 0, availableBeds: 0 });
+    }
+    if (configs.length > 0) {
+      this.roomConfigs = configs;
+    }
+  }
+  next();
+});
+
 module.exports = mongoose.model('PG', pgSchema);
+
