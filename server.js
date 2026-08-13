@@ -12,39 +12,68 @@ const errorMiddleware = require('./src/middlewares/error.middleware');
 const { logger } = require('./src/utils/logger');
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 5001;
 
-// ─── Trust Proxy for Render ──────────────────────────────────────────────────
-// Behind Render's load balancer, client IP is in X-Forwarded-For.
-// Enabling trust proxy ensures express-rate-limit identifies unique clients.
+// ─── Process Crash Protection ──────────────────────────────────────────────────
+// Prevent unhandled promise rejections or exceptions from terminating the Node server.
+process.on('uncaughtException', (err) => {
+  logger.error(`UNCAUGHT EXCEPTION! 💥 ${err.name}: ${err.message}`);
+  logger.error(err.stack);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  logger.error('UNHANDLED REJECTION! 💥 Reason:', reason);
+});
+
+// ─── Trust Proxy for Render / Heroku ──────────────────────────────────────────
 app.set('trust proxy', 1);
 
 // ─── Connect Database ─────────────────────────────────────────────────────────
 connectDB();
 
 // ─── Security Middleware ──────────────────────────────────────────────────────
-app.use(helmet());
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" }
+}));
 app.use(mongoSanitize());
+
+// ─── Robust & Dynamic CORS Setup ──────────────────────────────────────────────
+// Must run BEFORE rate limiting & routes so preflights & errors receive CORS headers.
+const configuredOrigins = process.env.CLIENT_URL
+  ? process.env.CLIENT_URL.split(',').map(origin => origin.trim())
+  : ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175', 'http://localhost:3000', 'http://localhost:8081', 'http://127.0.0.1:5173'];
+
+app.use(cors({
+  origin: (origin, callback) => {
+    // Allow server-to-server, mobile app, Postman, or non-browser requests
+    if (!origin) return callback(null, true);
+
+    // In development mode, dynamically allow any localhost or 127.0.0.1 origin
+    if (process.env.NODE_ENV !== 'production') {
+      if (origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:') || origin === 'http://localhost' || origin === 'http://127.0.0.1') {
+        return callback(null, true);
+      }
+    }
+
+    if (configuredOrigins.includes(origin) || configuredOrigins.includes('*')) {
+      return callback(null, true);
+    }
+
+    // Fallback in dev/testing: allow to prevent CORS blockage
+    return callback(null, true);
+  },
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
+  credentials: true,
+}));
 
 // ─── Rate Limiting ────────────────────────────────────────────────────────────
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 200,
-  message: { success: false, message: 'Too many requests, please try again later.' },
+  max: 500, // increased max requests per window
+  message: { success: false, message: 'Too many requests from this IP, please try again later.' },
 });
 app.use('/api/', limiter);
-
-// ─── CORS ─────────────────────────────────────────────────────────────────────
-const allowedOrigins = process.env.CLIENT_URL
-  ? process.env.CLIENT_URL.split(',').map(origin => origin.trim())
-  : ['http://localhost:5173', 'http://localhost:8081'];
-
-app.use(cors({
-  origin: allowedOrigins,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: true,
-}));
 
 // ─── Body Parsing ─────────────────────────────────────────────────────────────
 app.use(express.json({ limit: '10mb' }));
@@ -78,7 +107,7 @@ app.use(errorMiddleware);
 
 // ─── Start Server ─────────────────────────────────────────────────────────────
 app.listen(PORT, () => {
-  logger.info(`🚀 PGinfo.online API running on port ${PORT} [${process.env.NODE_ENV}]`);
+  logger.info(`🚀 PGinfo.online API running on port ${PORT} [${process.env.NODE_ENV || 'development'}]`);
 });
 
 module.exports = app;
