@@ -71,16 +71,21 @@ const loginUser = async ({ email, password }) => {
   const identifier = email.trim();
   const isEmail = /\S+@\S+\.\S+/.test(identifier);
   const digits = identifier.replace(/\D/g, '');
-  const isPhone = digits.length === 10 && /^[6-9]\d{9}$/.test(digits);
+  const isPhone = digits.length >= 10 && /^[6-9]\d{9}$/.test(digits.slice(-10));
 
   let query;
   if (isEmail) {
     query = { email: identifier.toLowerCase() };
   } else if (isPhone) {
-    query = { phone: digits };
+    const phone10 = digits.slice(-10);
+    query = { $or: [{ phone: phone10 }, { phone: identifier }] };
   } else {
     query = {
-      $or: [{ email: identifier.toLowerCase() }, { phone: identifier }],
+      $or: [
+        { email: identifier.toLowerCase() },
+        { phone: identifier },
+        ...(digits.length >= 10 ? [{ phone: digits.slice(-10) }] : []),
+      ],
     };
   }
 
