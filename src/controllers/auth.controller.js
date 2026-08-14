@@ -165,16 +165,19 @@ const sendOtpUnified = asyncHandler(async (req, res) => {
 /**
  * @route  POST /api/v1/auth/otp/verify-unified
  * @access Public
- * @desc   Verify OTP. If user exists → log in. If not → return temp token for registration.
+ * @desc   Verify OTP.
+ *         - Existing user  → log in, return { user, token }
+ *         - New user + isMobile=true  → auto-register (tenant, auto-name) + log in, no second trip
+ *         - New user + isMobile=false → return tempToken for web registration form
  */
 const verifyOtpUnified = asyncHandler(async (req, res) => {
-  const { contact, otp } = req.body;
+  const { contact, otp, isMobile = false } = req.body;
 
   const isEmail = /\S+@\S+\.\S+/.test(contact);
   const emailNorm = isEmail ? contact.toLowerCase().trim() : undefined;
   const phoneNorm = !isEmail ? contact.trim() : undefined;
 
-  // Verify OTP (throws on failure)
+  // Verify OTP (throws on failure with attempt count in message)
   await otpService.verifyOtpUnified({ email: emailNorm, phone: phoneNorm, otp });
 
   // Look up user
@@ -186,22 +189,26 @@ const verifyOtpUnified = asyncHandler(async (req, res) => {
     user = await User.findOne({ phone: phoneNorm });
   }
 
+  // ── Token duration: 90 days for mobile, 7 days for web ────────────────────
+  const tokenExpiry = isMobile ? '90d' : (process.env.JWT_EXPIRES_IN || '7d');
+  const generateTokenWithExpiry = (userId) =>
+    jwt.sign({ id: userId }, process.env.JWT_SECRET, { expiresIn: tokenExpiry });
+
   if (user) {
-    // ── Existing user → log in ─────────────────────────────────────────────
+    // ── Existing user → log in ────────────────────────────────────────────
     if (!user.isActive) {
       throw Object.assign(
-        new Error('Your account has been suspended. Contact support.'),
+        new Error('Your account has been suspended. Please contact support.'),
         { statusCode: 403 }
       );
     }
 
     user.lastLogin = new Date();
-    // Mark the verified channel
     if (emailNorm && !user.emailVerified) user.emailVerified = true;
     if (phoneNorm && !user.phoneVerified) user.phoneVerified = true;
     await user.save({ validateBeforeSave: false });
 
-    const token = authService.generateToken(user._id);
+    const token = generateTokenWithExpiry(user._id);
     return successResponse(res, 'Login successful', {
       isNewUser: false,
       user: user.toSafeObject(),
@@ -209,13 +216,21 @@ const verifyOtpUnified = asyncHandler(async (req, res) => {
     });
   }
 
-  // ── New user → issue a short-lived registration token ─────────────────────
+  // ── New user ────────────────────────────────────────────────────────────────
+  if (isMobile) {
+    // Mobile: auto-register instantly (tenant, auto-name) — zero extra steps
+    const result = await authService.registerUserViaOtp({ phone: phoneNorm });
+    const token = generateTokenWithExpiry(result.user._id || result.user.id);
+    return successResponse(res, 'Welcome to PGinfo! Account created.', {
+      isNewUser: true,
+      user: result.user,
+      token,
+    });
+  }
+
+  // Web: issue a short-lived registration token for the name/role form
   const tempToken = jwt.sign(
-    {
-      email: emailNorm,
-      phone: phoneNorm,
-      type: 'registration',
-    },
+    { email: emailNorm, phone: phoneNorm, type: 'registration' },
     process.env.JWT_SECRET,
     { expiresIn: '10m' }
   );

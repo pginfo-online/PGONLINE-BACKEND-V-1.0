@@ -125,46 +125,61 @@ const loginUser = async ({ email, password }) => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Register a new user after email OTP verification.
- * Supports email-only, phone-only, or email+phone combinations.
+ * Register a new user after OTP verification.
+ * Supports phone-only (mobile), email-only, or email+phone combinations.
+ * For mobile: name is auto-generated from phone number when not supplied.
  *
- * @param {{ name: string, email?: string|null, phone?: string }}
+ * @param {{ name?: string, email?: string|null, phone?: string }}
  */
 const registerUserViaOtp = async ({ name, email, phone }) => {
   const emailNorm = email ? email.toLowerCase().trim() : null;
   const phoneNorm = phone ? phone.trim() : null;
 
-  // Duplicate-check
+  // ── Duplicate-check (strictly guarded — no null queries) ──────────────────
   if (emailNorm) {
     const existingByEmail = await User.findOne({ email: emailNorm });
     if (existingByEmail) {
-      throw Object.assign(new Error('User with this email already exists'), {
-        statusCode: 409,
-      });
+      // Email already used → just log them in
+      const token = generateToken(existingByEmail._id);
+      existingByEmail.lastLogin = new Date();
+      if (!existingByEmail.emailVerified) existingByEmail.emailVerified = true;
+      await existingByEmail.save({ validateBeforeSave: false });
+      return { user: existingByEmail.toSafeObject(), token };
     }
   }
+
   if (phoneNorm) {
     const existingByPhone = await User.findOne({ phone: phoneNorm });
     if (existingByPhone) {
-      // If phone already linked → just log them in
+      // Phone already linked → just log them in
       const token = generateToken(existingByPhone._id);
       existingByPhone.lastLogin = new Date();
+      if (!existingByPhone.phoneVerified) existingByPhone.phoneVerified = true;
       await existingByPhone.save({ validateBeforeSave: false });
       return { user: existingByPhone.toSafeObject(), token };
     }
   }
 
-  // Generate a high-entropy random password (OTP users don't need a password)
+  // ── Auto-generate name for phone-only mobile registrations ────────────────
+  // The User model requires `name`. For phone-only users, use last 4 digits
+  // as a placeholder. Users can update it from their profile screen later.
+  const resolvedName = name && name.trim().length >= 2
+    ? name.trim()
+    : phoneNorm
+      ? `User${phoneNorm.slice(-4)}`
+      : 'PGinfo User';
+
+  // Generate a high-entropy random password (OTP users don't need a real password)
   const randomPassword = crypto.randomBytes(20).toString('hex');
 
   const user = await User.create({
-    name,
+    name: resolvedName,
     email: emailNorm || undefined,
     phone: phoneNorm || undefined,
     password: randomPassword,
-    role: 'tenant',               // OTP registration always starts as tenant
-    emailVerified: !!emailNorm,   // email OTP → email is verified
-    phoneVerified: !!phoneNorm,   // phone OTP → phone is verified
+    role: 'tenant',             // OTP registrations always start as tenant
+    emailVerified: !!emailNorm, // email OTP → email is verified
+    phoneVerified: !!phoneNorm, // phone OTP → phone is verified
   });
 
   const token = generateToken(user._id);

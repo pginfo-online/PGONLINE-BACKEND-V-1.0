@@ -72,6 +72,8 @@ const sendOtpUnifiedSchema = z.object({
 const verifyOtpUnifiedSchema = z.object({
   contact: z.string().min(3),
   otp: z.string().length(4, 'OTP must be exactly 4 digits'),
+  // When true, issues a 90-day JWT and auto-registers new users without a second round trip
+  isMobile: z.boolean().optional().default(false),
 });
 
 const registerCompleteSchema = z.object({

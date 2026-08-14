@@ -19,9 +19,10 @@ const generateOtp = () => crypto.randomInt(1000, 10000).toString();
 /**
  * Build the throttle-aware error for rate limiting
  */
-const buildRateLimitError = (message, statusCode = 429) => {
+const buildRateLimitError = (message, statusCode = 429, retryAfter = 0) => {
   const error = new Error(message);
   error.statusCode = statusCode;
+  error.retryAfter = retryAfter; // seconds until user can retry
   return error;
 };
 
@@ -437,7 +438,9 @@ const applyOtpThrottle = async (query, purpose) => {
       (COOLDOWN_MS - (Date.now() - latestOtp.createdAt.getTime())) / 1000
     );
     throw buildRateLimitError(
-      `Please wait ${remaining} second${remaining !== 1 ? 's' : ''} before requesting a new OTP.`
+      `Please wait ${remaining} second${remaining !== 1 ? 's' : ''} before requesting a new OTP.`,
+      429,
+      remaining  // ← retryAfter in seconds passed to client
     );
   }
 
@@ -448,7 +451,11 @@ const applyOtpThrottle = async (query, purpose) => {
     createdAt: { $gte: windowStart },
   });
   if (recentCount >= MAX_PER_WINDOW) {
-    throw buildRateLimitError('Too many OTP requests. Please try again in 15 minutes.');
+    throw buildRateLimitError(
+      'Too many OTP requests. Please try again in 15 minutes.',
+      429,
+      900 // 15 min in seconds
+    );
   }
 };
 
@@ -539,7 +546,7 @@ const createOtpUnified = async ({ email, phone, sendWhatsApp = true }) => {
     const phoneChannels = channels.filter((c) => c === 'sms' || c === 'whatsapp');
     if (phoneChannels.length === 0) {
       throw Object.assign(
-        new Error('Failed to deliver OTP. Please try again or use email.'),
+        new Error('Failed to deliver OTP. Please try again.'),
         { statusCode: 500 }
       );
     }
