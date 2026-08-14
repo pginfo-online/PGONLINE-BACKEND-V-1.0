@@ -27,29 +27,67 @@ const generateToken = (userId) =>
  * @param {{ name, email, phone?, password, role? }}
  */
 const registerUser = async ({ name, email, phone, password, role }) => {
-  const emailLower = email.toLowerCase().trim();
-  const existing = await User.findOne({ email: emailLower });
-  if (existing) {
-    throw Object.assign(new Error('User with this email already exists'), {
-      statusCode: 409,
-    });
+  const emailLower = email ? email.toLowerCase().trim() : null;
+  const phoneNorm = phone ? phone.trim() : null;
+
+  if (emailLower) {
+    const existing = await User.findOne({ email: emailLower });
+    if (existing) {
+      throw Object.assign(new Error('User with this email already exists'), {
+        statusCode: 409,
+      });
+    }
   }
 
-  const user = await User.create({ name, email: emailLower, phone, password, role });
+  if (phoneNorm) {
+    const existingPhone = await User.findOne({ phone: phoneNorm });
+    if (existingPhone) {
+      throw Object.assign(new Error('User with this mobile number already exists'), {
+        statusCode: 409,
+      });
+    }
+  }
+
+  const user = await User.create({
+    name,
+    email: emailLower || undefined,
+    phone: phoneNorm || undefined,
+    password,
+    role: role || 'tenant',
+  });
   const token = generateToken(user._id);
   return { user: user.toSafeObject(), token };
 };
 
 /**
- * Log in a user with email + password
- * @param {{ email, password }}
+ * Log in a user with email OR phone number + password
+ * @param {{ email: string, password: string }}
  */
 const loginUser = async ({ email, password }) => {
-  const emailLower = email.toLowerCase().trim();
-  const user = await User.findOne({ email: emailLower }).select('+password');
+  if (!email || !password) {
+    throw Object.assign(new Error('Email/Mobile and password are required'), { statusCode: 400 });
+  }
+
+  const identifier = email.trim();
+  const isEmail = /\S+@\S+\.\S+/.test(identifier);
+  const digits = identifier.replace(/\D/g, '');
+  const isPhone = digits.length === 10 && /^[6-9]\d{9}$/.test(digits);
+
+  let query;
+  if (isEmail) {
+    query = { email: identifier.toLowerCase() };
+  } else if (isPhone) {
+    query = { phone: digits };
+  } else {
+    query = {
+      $or: [{ email: identifier.toLowerCase() }, { phone: identifier }],
+    };
+  }
+
+  const user = await User.findOne(query).select('+password');
 
   if (!user) {
-    throw Object.assign(new Error('Invalid email or password'), { statusCode: 401 });
+    throw Object.assign(new Error('Invalid email/mobile or password'), { statusCode: 401 });
   }
   if (!user.isActive) {
     throw Object.assign(
@@ -58,9 +96,16 @@ const loginUser = async ({ email, password }) => {
     );
   }
 
+  if (!user.password) {
+    throw Object.assign(
+      new Error('This account was created via OTP. Please log in using OTP.'),
+      { statusCode: 400 }
+    );
+  }
+
   const isMatch = await user.comparePassword(password);
   if (!isMatch) {
-    throw Object.assign(new Error('Invalid email or password'), { statusCode: 401 });
+    throw Object.assign(new Error('Invalid email/mobile or password'), { statusCode: 401 });
   }
 
   user.lastLogin = new Date();
