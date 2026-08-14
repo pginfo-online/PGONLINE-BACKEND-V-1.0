@@ -7,7 +7,7 @@ const Groq = require('groq-sdk');
  * @route GET /api/v1/pg
  */
 const getPGs = asyncHandler(async (req, res) => {
-  const { pgs, pagination } = await pgService.getPGs(req.query);
+  const { pgs, pagination } = await pgService.getPGs(req.query, req.user);
   paginatedResponse(res, 'PG listings retrieved', pgs, pagination);
 });
 
@@ -92,7 +92,7 @@ Valid JSON fields (all optional):
  * @route GET /api/v1/pg/:id
  */
 const getPGById = asyncHandler(async (req, res) => {
-  const pg = await pgService.getPGById(req.params.id);
+  const pg = await pgService.getPGById(req.params.id, req.user);
   successResponse(res, 'PG details retrieved', { pg });
 });
 

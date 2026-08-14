@@ -58,8 +58,15 @@ const createOwnerSchema = z.object({
 
 
 const sendOtpUnifiedSchema = z.object({
-  contact: z.string().min(3),
-  type: z.enum(['email', 'phone']),
+  contact: z.string().min(3, 'Contact must be at least 3 characters'),
+  type: z.enum(['email', 'phone'], {
+    errorMap: () => ({ message: "Type must be 'email' or 'phone'" }),
+  }),
+  /**
+   * When true (default), also deliver the OTP via WhatsApp for phone contacts.
+   * Has no effect when contact type is 'email'.
+   */
+  sendWhatsApp: z.boolean().optional().default(true),
 });
 
 const verifyOtpUnifiedSchema = z.object({

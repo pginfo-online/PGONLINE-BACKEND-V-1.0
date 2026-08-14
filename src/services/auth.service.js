@@ -1,56 +1,66 @@
+'use strict';
+
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const User = require('../models/User.model');
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Token
+// ─────────────────────────────────────────────────────────────────────────────
+
 /**
- * Generate JWT token for a user
+ * Generate a signed JWT for a user
+ * @param {string} userId
+ * @returns {string} signed JWT
  */
-const generateToken = (userId) => {
-  return jwt.sign({ id: userId }, process.env.JWT_SECRET, {
+const generateToken = (userId) =>
+  jwt.sign({ id: userId }, process.env.JWT_SECRET, {
     expiresIn: process.env.JWT_EXPIRES_IN || '7d',
   });
-};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Standard password-based auth
+// ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Register a new user (tenant or owner)
+ * Register a new user with email + password
+ * @param {{ name, email, phone?, password, role? }}
  */
 const registerUser = async ({ name, email, phone, password, role }) => {
-  const existingUser = await User.findOne({ email });
-  if (existingUser) {
-    const error = new Error('User with this email already exists');
-    error.statusCode = 409;
-    throw error;
+  const emailLower = email.toLowerCase().trim();
+  const existing = await User.findOne({ email: emailLower });
+  if (existing) {
+    throw Object.assign(new Error('User with this email already exists'), {
+      statusCode: 409,
+    });
   }
 
-  const user = await User.create({ name, email, phone, password, role });
+  const user = await User.create({ name, email: emailLower, phone, password, role });
   const token = generateToken(user._id);
-
   return { user: user.toSafeObject(), token };
 };
 
 /**
- * Login a user
+ * Log in a user with email + password
+ * @param {{ email, password }}
  */
 const loginUser = async ({ email, password }) => {
-  const user = await User.findOne({ email }).select('+password');
+  const emailLower = email.toLowerCase().trim();
+  const user = await User.findOne({ email: emailLower }).select('+password');
 
   if (!user) {
-    const error = new Error('Invalid email or password');
-    error.statusCode = 401;
-    throw error;
+    throw Object.assign(new Error('Invalid email or password'), { statusCode: 401 });
   }
-
   if (!user.isActive) {
-    const error = new Error('Your account has been suspended. Contact support.');
-    error.statusCode = 403;
-    throw error;
+    throw Object.assign(
+      new Error('Your account has been suspended. Contact support.'),
+      { statusCode: 403 }
+    );
   }
 
   const isMatch = await user.comparePassword(password);
   if (!isMatch) {
-    const error = new Error('Invalid email or password');
-    error.statusCode = 401;
-    throw error;
+    throw Object.assign(new Error('Invalid email or password'), { statusCode: 401 });
   }
 
   user.lastLogin = new Date();
@@ -60,33 +70,51 @@ const loginUser = async ({ email, password }) => {
   return { user: user.toSafeObject(), token };
 };
 
-/**
- * Update user push token (for notifications)
- */
-const updatePushToken = async (userId, pushToken) => {
-  return User.findByIdAndUpdate(userId, { pushToken }, { new: true }).select('-password');
-};
+// ─────────────────────────────────────────────────────────────────────────────
+// OTP-based auth helpers
+// ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Register a user who verified their email via OTP
+ * Register a new user after email OTP verification.
+ * Supports email-only, phone-only, or email+phone combinations.
+ *
+ * @param {{ name: string, email?: string|null, phone?: string }}
  */
 const registerUserViaOtp = async ({ name, email, phone }) => {
-  const emailLower = email.toLowerCase().trim();
-  const existingUser = await User.findOne({ email: emailLower });
-  if (existingUser) {
-    const error = new Error('User with this email already exists');
-    error.statusCode = 409;
-    throw error;
+  const emailNorm = email ? email.toLowerCase().trim() : null;
+  const phoneNorm = phone ? phone.trim() : null;
+
+  // Duplicate-check
+  if (emailNorm) {
+    const existingByEmail = await User.findOne({ email: emailNorm });
+    if (existingByEmail) {
+      throw Object.assign(new Error('User with this email already exists'), {
+        statusCode: 409,
+      });
+    }
+  }
+  if (phoneNorm) {
+    const existingByPhone = await User.findOne({ phone: phoneNorm });
+    if (existingByPhone) {
+      // If phone already linked → just log them in
+      const token = generateToken(existingByPhone._id);
+      existingByPhone.lastLogin = new Date();
+      await existingByPhone.save({ validateBeforeSave: false });
+      return { user: existingByPhone.toSafeObject(), token };
+    }
   }
 
-  // Generate a random high-entropy password because the password field is required in the DB schema
+  // Generate a high-entropy random password (OTP users don't need a password)
   const randomPassword = crypto.randomBytes(20).toString('hex');
+
   const user = await User.create({
     name,
-    email: emailLower,
-    phone: phone || undefined,
+    email: emailNorm || undefined,
+    phone: phoneNorm || undefined,
     password: randomPassword,
-    role: 'tenant', // OTP registration defaults to tenant role
+    role: 'tenant',               // OTP registration always starts as tenant
+    emailVerified: !!emailNorm,   // email OTP → email is verified
+    phoneVerified: !!phoneNorm,   // phone OTP → phone is verified
   });
 
   const token = generateToken(user._id);
@@ -94,31 +122,74 @@ const registerUserViaOtp = async ({ name, email, phone }) => {
 };
 
 /**
- * Login a user who verified their email via OTP
+ * Log in an existing user by email (after OTP verification)
+ * @param {{ email: string }}
  */
 const loginUserViaOtp = async ({ email }) => {
   const emailLower = email.toLowerCase().trim();
   const user = await User.findOne({ email: emailLower });
 
   if (!user) {
-    const error = new Error('No account found with this email. Please register first.');
-    error.statusCode = 404;
-    throw error;
+    throw Object.assign(
+      new Error('No account found with this email. Please register first.'),
+      { statusCode: 404 }
+    );
   }
-
   if (!user.isActive) {
-    const error = new Error('Your account has been suspended. Contact support.');
-    error.statusCode = 403;
-    throw error;
+    throw Object.assign(
+      new Error('Your account has been suspended. Contact support.'),
+      { statusCode: 403 }
+    );
   }
 
   user.lastLogin = new Date();
+  if (!user.emailVerified) user.emailVerified = true;
   await user.save({ validateBeforeSave: false });
 
   const token = generateToken(user._id);
   return { user: user.toSafeObject(), token };
 };
 
+/**
+ * Log in an existing user by phone (after OTP verification)
+ * @param {{ phone: string }}
+ */
+const loginUserViaPhone = async ({ phone }) => {
+  const phoneNorm = phone.trim();
+  const user = await User.findOne({ phone: phoneNorm });
+
+  if (!user) {
+    throw Object.assign(
+      new Error('No account found with this number. Please register first.'),
+      { statusCode: 404 }
+    );
+  }
+  if (!user.isActive) {
+    throw Object.assign(
+      new Error('Your account has been suspended. Contact support.'),
+      { statusCode: 403 }
+    );
+  }
+
+  user.lastLogin = new Date();
+  if (!user.phoneVerified) user.phoneVerified = true;
+  await user.save({ validateBeforeSave: false });
+
+  const token = generateToken(user._id);
+  return { user: user.toSafeObject(), token };
+};
+
+/**
+ * Update user push notification token
+ * @param {string} userId
+ * @param {string} pushToken
+ */
+const updatePushToken = async (userId, pushToken) =>
+  User.findByIdAndUpdate(userId, { pushToken }, { new: true }).select('-password');
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Exports
+// ─────────────────────────────────────────────────────────────────────────────
 module.exports = {
   generateToken,
   registerUser,
@@ -126,4 +197,5 @@ module.exports = {
   updatePushToken,
   registerUserViaOtp,
   loginUserViaOtp,
+  loginUserViaPhone,
 };

@@ -86,7 +86,10 @@ const buildSort = (sort) => {
 /**
  * Get paginated PG listings
  */
-const getPGs = async (params) => {
+/**
+ * Get paginated PG listings
+ */
+const getPGs = async (params, user = null) => {
   const query = buildSearchQuery(params);
   const sort = buildSort(params.sort);
   const page = Math.max(1, parseInt(params.page, 10) || 1);
@@ -114,8 +117,6 @@ const getPGs = async (params) => {
 
     const pipeline = [
       geoNearStage,
-      // If we are sorting by distance, $geoNear already sorts by distance implicitly unless another sort is specified.
-      // We will only apply $sort if it's not distance sorting.
       ...(sort ? [{ $sort: sort }] : []),
       { $skip: skip },
       { $limit: limit },
@@ -163,8 +164,19 @@ const getPGs = async (params) => {
     total = findTotal;
   }
 
+  // ─── Public Sanitization ───────────────────────────────────────────────────
+  const isGuest = !user;
+  const sanitizedPgs = pgs.map((item) => {
+    const pgObj = { ...item, isPublicPreview: isGuest };
+    if (isGuest && pgObj.owner) {
+      delete pgObj.owner.email;
+      delete pgObj.owner.phone;
+    }
+    return pgObj;
+  });
+
   return {
-    pgs,
+    pgs: sanitizedPgs,
     pagination: {
       total,
       page,
@@ -179,7 +191,7 @@ const getPGs = async (params) => {
 /**
  * Get single PG by ID (increment view count)
  */
-const getPGById = async (id) => {
+const getPGById = async (id, user = null) => {
   const pg = await PG.findByIdAndUpdate(
     id,
     { $inc: { views: 1 } },
@@ -192,7 +204,38 @@ const getPGById = async (id) => {
     throw err;
   }
 
-  return pg;
+  const pgObj = pg.toObject();
+  const isGuest = !user;
+  pgObj.isPublicPreview = isGuest;
+
+  if (isGuest) {
+    // Mask sensitive contact details for unauthenticated public visitors
+    if (pgObj.contactPhone) {
+      const raw = pgObj.contactPhone.replace(/\D/g, '');
+      if (raw.length >= 10) {
+        pgObj.contactPhone = `+91 ${raw.slice(0, 2)}******${raw.slice(-2)}`;
+      } else {
+        pgObj.contactPhone = '+91 ********';
+      }
+    } else {
+      pgObj.contactPhone = '+91 ********';
+    }
+
+    delete pgObj.contactWhatsapp;
+    delete pgObj.mapsLink;
+
+    if (pgObj.owner) {
+      delete pgObj.owner.email;
+      delete pgObj.owner.phone;
+    }
+
+    // Mask exact address line
+    if (pgObj.area && pgObj.city) {
+      pgObj.address = `${pgObj.area}, ${pgObj.city} (Exact address unlocked after login)`;
+    }
+  }
+
+  return pgObj;
 };
 
 /**

@@ -1,11 +1,18 @@
+'use strict';
+
 const asyncHandler = require('../utils/asyncHandler');
 const { successResponse } = require('../utils/apiResponse');
 const authService = require('../services/auth.service');
 const otpService = require('../services/otp.service');
-const jwt = require('jsonwebtoken');   // <-- added
+const jwt = require('jsonwebtoken');
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Standard password-based auth
+// ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * @route POST /api/v1/auth/register
+ * @route  POST /api/v1/auth/register
+ * @access Public
  */
 const register = asyncHandler(async (req, res) => {
   const { name, email, phone, password, role } = req.body;
@@ -14,7 +21,8 @@ const register = asyncHandler(async (req, res) => {
 });
 
 /**
- * @route POST /api/v1/auth/login
+ * @route  POST /api/v1/auth/login
+ * @access Public
  */
 const login = asyncHandler(async (req, res) => {
   const { email, password } = req.body;
@@ -22,15 +30,21 @@ const login = asyncHandler(async (req, res) => {
   successResponse(res, 'Login successful', result);
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Authenticated user profile
+// ─────────────────────────────────────────────────────────────────────────────
+
 /**
- * @route GET /api/v1/auth/me
+ * @route  GET /api/v1/auth/me
+ * @access Private
  */
 const getMe = asyncHandler(async (req, res) => {
   successResponse(res, 'User profile retrieved', { user: req.user });
 });
 
 /**
- * @route PUT /api/v1/auth/me
+ * @route  PUT /api/v1/auth/me
+ * @access Private
  */
 const updateMe = asyncHandler(async (req, res) => {
   const { name, phone, pushToken } = req.body;
@@ -43,34 +57,39 @@ const updateMe = asyncHandler(async (req, res) => {
   successResponse(res, 'Profile updated', { user });
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Legacy email-only OTP routes (kept for backwards compatibility)
+// ─────────────────────────────────────────────────────────────────────────────
+
 /**
- * @route POST /api/v1/auth/otp/send
+ * @route  POST /api/v1/auth/otp/send
+ * @access Public
+ * @desc   Send OTP for email-only register/login
  */
 const sendOtp = asyncHandler(async (req, res) => {
   const { email, purpose } = req.body;
   const emailLower = email.toLowerCase().trim();
 
-  // Safety checks
   if (purpose === 'register') {
     const User = require('../models/User.model');
     const existingUser = await User.findOne({ email: emailLower });
     if (existingUser) {
-      const error = new Error('User with this email already exists');
-      error.statusCode = 409;
-      throw error;
+      throw Object.assign(new Error('User with this email already exists'), { statusCode: 409 });
     }
   } else if (purpose === 'login') {
     const User = require('../models/User.model');
     const user = await User.findOne({ email: emailLower });
     if (!user) {
-      const error = new Error('No account found with this email. Please register first.');
-      error.statusCode = 404;
-      throw error;
+      throw Object.assign(
+        new Error('No account found with this email. Please register first.'),
+        { statusCode: 404 }
+      );
     }
     if (!user.isActive) {
-      const error = new Error('Your account has been suspended. Contact support.');
-      error.statusCode = 403;
-      throw error;
+      throw Object.assign(
+        new Error('Your account has been suspended. Contact support.'),
+        { statusCode: 403 }
+      );
     }
   }
 
@@ -79,130 +98,171 @@ const sendOtp = asyncHandler(async (req, res) => {
 });
 
 /**
- * @route POST /api/v1/auth/otp/register
+ * @route  POST /api/v1/auth/otp/register
+ * @access Public
  */
 const verifyOtpRegister = asyncHandler(async (req, res) => {
   const { name, email, phone, otp } = req.body;
   const emailLower = email.toLowerCase().trim();
-
-  // Verify OTP
   await otpService.verifyOtp(emailLower, 'register', otp);
-
-  // Register User
   const result = await authService.registerUserViaOtp({ name, email: emailLower, phone });
   successResponse(res, 'Registration successful', result, 201);
 });
 
 /**
- * @route POST /api/v1/auth/otp/login
+ * @route  POST /api/v1/auth/otp/login
+ * @access Public
  */
 const verifyOtpLogin = asyncHandler(async (req, res) => {
   const { email, otp } = req.body;
   const emailLower = email.toLowerCase().trim();
-
-  // Verify OTP
   await otpService.verifyOtp(emailLower, 'login', otp);
-
-  // Log in User
   const result = await authService.loginUserViaOtp({ email: emailLower });
   successResponse(res, 'Login successful', result);
 });
 
-
-
-// ... at the end of the existing controller file, add:
+// ─────────────────────────────────────────────────────────────────────────────
+// Unified OTP flow — supports email OR phone + WhatsApp option
+// ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * @route POST /api/v1/auth/otp/send-unified
- * @desc  Send OTP for login OR register (doesn't check existence)
+ * @route  POST /api/v1/auth/otp/send-unified
+ * @access Public
+ * @desc   Send OTP for login OR register (doesn't pre-check user existence).
+ *         When contact is a phone number:
+ *           - Always sends SMS (Ping4SMS route=4)
+ *           - Also sends WhatsApp (Ping4SMS route=6) if sendWhatsApp=true (default)
  */
 const sendOtpUnified = asyncHandler(async (req, res) => {
-  const { contact, type } = req.body;
-  // contact can be email or phone (phone includes country code validation later)
-  const email = type === 'email' ? contact.toLowerCase().trim() : undefined;
-  const phone = type === 'phone' ? contact.trim() : undefined;
+  const { contact, type, sendWhatsApp = true } = req.body;
 
-  // We'll create a generic OTP with purpose 'unified'
-  await otpService.createOtpUnified({ email, phone });
-  successResponse(res, 'Verification OTP sent');
+  const emailNorm = type === 'email' ? contact.toLowerCase().trim() : undefined;
+  const phoneNorm = type === 'phone' ? contact.trim() : undefined;
+
+  const result = await otpService.createOtpUnified({
+    email: emailNorm,
+    phone: phoneNorm,
+    sendWhatsApp: Boolean(sendWhatsApp),
+  });
+
+  // Build a helpful message describing which channels were used
+  const channelLabels = {
+    email: 'email',
+    sms: 'SMS',
+    whatsapp: 'WhatsApp',
+  };
+  const channelList = (result.channels || [])
+    .map((c) => channelLabels[c] || c)
+    .join(' & ');
+
+  successResponse(
+    res,
+    `Verification OTP sent via ${channelList || 'selected channel'}`,
+    { channels: result.channels }
+  );
 });
 
 /**
- * @route POST /api/v1/auth/otp/verify-unified
- * @desc  Verify OTP. If user exists → login; else → return temp token for registration
+ * @route  POST /api/v1/auth/otp/verify-unified
+ * @access Public
+ * @desc   Verify OTP. If user exists → log in. If not → return temp token for registration.
  */
 const verifyOtpUnified = asyncHandler(async (req, res) => {
   const { contact, otp } = req.body;
-  // Detect type (simple, can be improved)
+
   const isEmail = /\S+@\S+\.\S+/.test(contact);
-  const email = isEmail ? contact.toLowerCase().trim() : undefined;
-  const phone = !isEmail ? contact.trim() : undefined;
+  const emailNorm = isEmail ? contact.toLowerCase().trim() : undefined;
+  const phoneNorm = !isEmail ? contact.trim() : undefined;
 
-  // Verify OTP (this method returns true or throws)
-  await otpService.verifyOtpUnified({ email, phone, otp });
+  // Verify OTP (throws on failure)
+  await otpService.verifyOtpUnified({ email: emailNorm, phone: phoneNorm, otp });
 
-  // Check if user exists
+  // Look up user
   const User = require('../models/User.model');
   let user = null;
-  if (email) {
-    user = await User.findOne({ email });
+  if (emailNorm) {
+    user = await User.findOne({ email: emailNorm });
   } else {
-    user = await User.findOne({ phone });
+    user = await User.findOne({ phone: phoneNorm });
   }
 
   if (user) {
-    // Existing user → login
+    // ── Existing user → log in ─────────────────────────────────────────────
+    if (!user.isActive) {
+      throw Object.assign(
+        new Error('Your account has been suspended. Contact support.'),
+        { statusCode: 403 }
+      );
+    }
+
     user.lastLogin = new Date();
+    // Mark the verified channel
+    if (emailNorm && !user.emailVerified) user.emailVerified = true;
+    if (phoneNorm && !user.phoneVerified) user.phoneVerified = true;
     await user.save({ validateBeforeSave: false });
+
     const token = authService.generateToken(user._id);
-    successResponse(res, 'Login successful', { isNewUser: false, user: user.toSafeObject(), token });
-  } else {
-    // New user → create a temporary token that allows registration
-    const tempToken = jwt.sign(
-      { email, phone, type: 'registration' },
-      process.env.JWT_SECRET,
-      { expiresIn: '10m' }
-    );
-    successResponse(res, 'New user - proceed to registration', { isNewUser: true, tempToken });
+    return successResponse(res, 'Login successful', {
+      isNewUser: false,
+      user: user.toSafeObject(),
+      token,
+    });
   }
+
+  // ── New user → issue a short-lived registration token ─────────────────────
+  const tempToken = jwt.sign(
+    {
+      email: emailNorm,
+      phone: phoneNorm,
+      type: 'registration',
+    },
+    process.env.JWT_SECRET,
+    { expiresIn: '10m' }
+  );
+
+  return successResponse(res, 'New user — proceed to registration', {
+    isNewUser: true,
+    tempToken,
+  });
 });
 
 /**
- * @route POST /api/v1/auth/register-complete
- * @desc  Finalise registration after OTP verification for a new user
+ * @route  POST /api/v1/auth/register-complete
+ * @access Public
+ * @desc   Finalise registration for a new user after OTP verification
  */
 const registerComplete = asyncHandler(async (req, res) => {
   const { tempToken, name, phone: newPhone } = req.body;
 
-  // Verify temp token
   let decoded;
   try {
     decoded = jwt.verify(tempToken, process.env.JWT_SECRET);
   } catch {
-    const error = new Error('Invalid or expired session. Please start again.');
-    error.statusCode = 400;
-    throw error;
+    throw Object.assign(
+      new Error('Invalid or expired session. Please start again.'),
+      { statusCode: 400 }
+    );
   }
 
   if (decoded.type !== 'registration') {
-    const error = new Error('Invalid token type');
-    error.statusCode = 400;
-    throw error;
+    throw Object.assign(new Error('Invalid token type'), { statusCode: 400 });
   }
 
-  const email = decoded.email || undefined;
-  const phoneFromToken = decoded.phone || undefined;
+  const emailFromToken = decoded.email || null;
+  const phoneFromToken = decoded.phone || newPhone || null;
 
-  // Register user (reuse existing service)
   const result = await authService.registerUserViaOtp({
     name,
-    email: email || null,
-    phone: phoneFromToken || newPhone || undefined,
+    email: emailFromToken,
+    phone: phoneFromToken,
   });
 
   successResponse(res, 'Registration successful', result, 201);
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Exports
+// ─────────────────────────────────────────────────────────────────────────────
 module.exports = {
   register,
   login,
@@ -211,7 +271,7 @@ module.exports = {
   sendOtp,
   verifyOtpRegister,
   verifyOtpLogin,
-  sendOtpUnified,      
+  sendOtpUnified,
   verifyOtpUnified,
-  registerComplete,    
+  registerComplete,
 };

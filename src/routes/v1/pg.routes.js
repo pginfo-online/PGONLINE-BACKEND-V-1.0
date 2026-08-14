@@ -5,12 +5,12 @@ const { protect, authorize, optionalAuth } = require('../../middlewares/auth.mid
 const validate = require('../../middlewares/validate.middleware');
 const { createPGSchema, updatePGSchema, pgSearchSchema } = require('../../validators/pg.validator');
 
-router.get('/', validate(pgSearchSchema, 'query'), getPGs);
+router.get('/', optionalAuth, validate(pgSearchSchema, 'query'), getPGs);
 router.get('/suggestions', getSuggestions);
 router.get('/ai-search', protect, authorize('tenant'), aiSearch);
 router.get('/my', protect, authorize('owner'), getMyPGs);
 router.get('/my/paginated', protect, authorize('owner'), getMyPGsPaginated);
-router.get('/:id', getPGById);
+router.get('/:id', optionalAuth, getPGById);
 router.post('/', protect, authorize('owner', 'tenant'), validate(createPGSchema), createPG);
 router.put('/:id', protect, authorize('owner'), validate(updatePGSchema), updatePG);
 router.get('/my/update-requests', protect, authorize('owner'), getMyUpdateRequests);
