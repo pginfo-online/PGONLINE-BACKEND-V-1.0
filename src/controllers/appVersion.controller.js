@@ -48,7 +48,7 @@ const checkAppVersion = asyncHandler(async (req, res) => {
       { scheduledRelease: null },
       { scheduledRelease: { $lte: new Date() } }
     ]
-  }).sort({ createdAt: -1 });
+  }).sort({ createdAt: -1 }).lean();
 
   if (activeVersions.length === 0) {
     return successResponse(res, 'No version configuration found', {
