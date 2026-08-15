@@ -18,7 +18,6 @@ const userSchema = new mongoose.Schema(
       lowercase: true,
       trim: true,
       match: [/^\S+@\S+\.\S+$/, 'Please enter a valid email'],
-      default: null,
     },
     phone: {
       type: String,
@@ -26,7 +25,6 @@ const userSchema = new mongoose.Schema(
       sparse: true,           // allows multiple null values (email-only users)
       trim: true,
       match: [/^[6-9]\d{9}$/, 'Please enter a valid Indian mobile number'],
-      default: null,
     },
 
     // ─── Verification status ──────────────────────────────────────────────────
