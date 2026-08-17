@@ -17,8 +17,17 @@ const loginSchema = z.object({
 });
 
 const updateProfileSchema = z.object({
-  name: z.string().min(2).max(100).optional(),
-  phone: z.string().regex(/^[6-9]\d{9}$/).optional(),
+  name: z.string().min(2, 'Name must be at least 2 characters').max(100).optional(),
+  phone: z.string().regex(/^[6-9]\d{9}$/, 'Enter a valid 10-digit Indian mobile number').optional(),
+  email: z.string().email('Please enter a valid email').optional().or(z.literal('')),
+  altPhone: z.string().regex(/^[6-9]\d{9}$/, 'Enter a valid 10-digit Indian mobile number').optional().or(z.literal('')),
+  gender: z.enum(['male', 'female', 'other', 'prefer_not_to_say']).optional().or(z.literal('')),
+  dob: z.string().datetime().optional().or(z.string().date()).optional().or(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)).optional().or(z.literal('')),
+  address: z.string().optional().or(z.literal('')),
+  city: z.string().optional().or(z.literal('')),
+  state: z.string().optional().or(z.literal('')),
+  pincode: z.string().regex(/^\d{6}$/, 'Pincode must be exactly 6 digits').optional().or(z.literal('')),
+  profilePhoto: z.string().optional().or(z.literal('')),
   pushToken: z.string().optional(),
 });
 

@@ -47,13 +47,63 @@ const getMe = asyncHandler(async (req, res) => {
  * @access Private
  */
 const updateMe = asyncHandler(async (req, res) => {
-  const { name, phone, pushToken } = req.body;
+  const {
+    name,
+    phone,
+    email,
+    altPhone,
+    gender,
+    dob,
+    address,
+    city,
+    state,
+    pincode,
+    profilePhoto,
+    pushToken,
+  } = req.body;
+
   const User = require('../models/User.model');
+
+  // Format dob string to Date object if provided
+  let formattedDob = undefined;
+  if (dob !== undefined) {
+    formattedDob = dob ? new Date(dob) : null;
+  }
+
+  const updateFields = {};
+  if (name !== undefined) updateFields.name = name;
+  if (phone !== undefined) updateFields.phone = phone;
+  if (email !== undefined) updateFields.email = email ? email.toLowerCase().trim() : null;
+  if (altPhone !== undefined) updateFields.altPhone = altPhone || null;
+  if (gender !== undefined) updateFields.gender = gender || null;
+  if (formattedDob !== undefined) updateFields.dob = formattedDob;
+  if (address !== undefined) updateFields.address = address || null;
+  if (city !== undefined) updateFields.city = city || null;
+  if (state !== undefined) updateFields.state = state || null;
+  if (pincode !== undefined) updateFields.pincode = pincode || null;
+  if (profilePhoto !== undefined) updateFields.profilePhoto = profilePhoto || null;
+  if (pushToken !== undefined) updateFields.pushToken = pushToken;
+
+  // Check unique constraints on email & phone manually to return nice errors
+  if (updateFields.email) {
+    const existing = await User.findOne({ email: updateFields.email, _id: { $ne: req.user._id } });
+    if (existing) {
+      throw Object.assign(new Error('A user with this email address already exists'), { statusCode: 409 });
+    }
+  }
+  if (updateFields.phone) {
+    const existing = await User.findOne({ phone: updateFields.phone, _id: { $ne: req.user._id } });
+    if (existing) {
+      throw Object.assign(new Error('A user with this phone number already exists'), { statusCode: 409 });
+    }
+  }
+
   const user = await User.findByIdAndUpdate(
     req.user._id,
-    { name, phone, pushToken },
+    updateFields,
     { new: true, runValidators: true }
   ).select('-password');
+
   successResponse(res, 'Profile updated', { user });
 });
 

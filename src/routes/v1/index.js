@@ -11,6 +11,7 @@ const meetupRoutes = require('./meetup.routes');
 const appVersionRoutes = require('./appVersion.routes');
 const chatbotRoutes = require('./chatbot.routes');
 const manageRoutes = require('./manage.routes');
+const notificationRoutes = require('./notification.routes');
 
 
 router.use('/auth', authRoutes);
@@ -23,6 +24,7 @@ router.use('/upload', uploadRoutes);
 router.use('/meetups', meetupRoutes);
 router.use('/app-version', appVersionRoutes);
 router.use('/manage', manageRoutes);
+router.use('/notifications', notificationRoutes);
 
 
 // API info
@@ -30,7 +32,7 @@ router.get('/', (req, res) => {
   res.json({
     success: true,
     message: 'PGinfo.online API v1',
-    endpoints: ['/auth', '/pg', '/lead', '/visit', '/admin', '/upload', '/meetups', '/manage'],
+    endpoints: ['/auth', '/pg', '/lead', '/visit', '/admin', '/upload', '/meetups', '/manage', '/notifications'],
   });
 });
 

@@ -7,6 +7,7 @@ const PG         = require('../../models/PG.model');
 const razorpayService = require('../../services/manage/razorpay.service');
 const rentService     = require('../../services/manage/rent.service');
 const crypto = require('crypto');
+const notificationTrigger = require('../../services/notification/notification.trigger');
 
 /**
  * Create a Razorpay order for a rent payment (Web only for now).
@@ -140,6 +141,7 @@ exports.verifyPayment = asyncHandler(async (req, res) => {
     });
   }
 
+  notificationTrigger.onPaymentSuccess(payment).catch(() => {});
   return successResponse(res, 'Payment verified successfully', payment);
 });
 
@@ -202,16 +204,19 @@ exports.handleWebhook = asyncHandler(async (req, res) => {
     payment.webhookProcessedAt = new Date();
     payment.gatewayResponse    = paymentEntity;
     await payment.save();
+    notificationTrigger.onPaymentSuccess(payment).catch(() => {});
   }
 
   // Handle payment.failed
   if (eventType === 'payment.failed') {
     const paymentEntity = event.payload?.payment?.entity;
     if (paymentEntity?.order_id) {
-      await Payment.findOneAndUpdate(
+      const failedPayment = await Payment.findOneAndUpdate(
         { razorpayOrderId: paymentEntity.order_id },
-        { status: 'failed', webhookProcessed: true, webhookProcessedAt: new Date() }
+        { status: 'failed', webhookProcessed: true, webhookProcessedAt: new Date() },
+        { new: true }
       );
+      if (failedPayment) notificationTrigger.onPaymentFailed(failedPayment).catch(() => {});
     }
   }
 
@@ -295,5 +300,6 @@ exports.recordManualPayment = asyncHandler(async (req, res) => {
     });
   }
 
+  notificationTrigger.onManualPaymentRecorded(payment).catch(() => {});
   return successResponse(res, 'Manual payment recorded', payment, 201);
 });

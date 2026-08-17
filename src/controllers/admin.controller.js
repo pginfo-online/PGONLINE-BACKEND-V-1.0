@@ -4,6 +4,7 @@ const PG = require('../models/PG.model');
 const User = require('../models/User.model');
 const Lead = require('../models/Lead.model');
 const VisitRequest = require('../models/VisitRequest.model');
+const notificationTrigger = require('../services/notification/notification.trigger');
 
 // /**
 //  * @route GET /api/v1/admin/pgs
@@ -46,17 +47,56 @@ const getAllPGs = asyncHandler(async (req, res) => {
     query.status = cleanStatus;
   }
 
+  // Filter params
+  const { city, area, gender, propertyType, isVerified } = req.query;
+
+  if (city && typeof city === 'string' && city.trim()) {
+    query.city = new RegExp(city.trim(), 'i');
+  }
+
+  if (area && typeof area === 'string' && area.trim()) {
+    query.area = new RegExp(area.trim(), 'i');
+  }
+
+  if (gender && gender !== 'all') {
+    query.gender = gender;
+  }
+
+  if (propertyType && propertyType !== 'all') {
+    query.propertyType = propertyType;
+  }
+
+  if (isVerified !== undefined && isVerified !== '' && isVerified !== 'all') {
+    query.isVerified = isVerified === 'true' || isVerified === true;
+  }
+
   if (cleanSearch) {
     const searchTerms = cleanSearch.split(' ').filter(Boolean);
     const escapedTerms = searchTerms.map((term) => term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-    query.$or = escapedTerms.flatMap((term) => [
-      { name: new RegExp(term, 'i') },
-      { area: new RegExp(term, 'i') },
-      { city: new RegExp(term, 'i') },
-      { address: new RegExp(term, 'i') },
-      { description: new RegExp(term, 'i') },
-      { contactPhone: new RegExp(term, 'i') },
-    ]);
+    
+    // Find matching owner IDs to allow searching by owner name / email / phone
+    const User = require('../models/User.model');
+    const matchingOwners = await User.find({
+      $or: escapedTerms.flatMap((term) => [
+        { name: new RegExp(term, 'i') },
+        { email: new RegExp(term, 'i') },
+        { phone: new RegExp(term, 'i') }
+      ])
+    }).select('_id').lean();
+
+    const ownerIds = matchingOwners.map(o => o._id);
+
+    query.$or = [
+      ...escapedTerms.flatMap((term) => [
+        { name: new RegExp(term, 'i') },
+        { area: new RegExp(term, 'i') },
+        { city: new RegExp(term, 'i') },
+        { address: new RegExp(term, 'i') },
+        { description: new RegExp(term, 'i') },
+        { contactPhone: new RegExp(term, 'i') },
+      ]),
+      ...(ownerIds.length > 0 ? [{ owner: { $in: ownerIds } }] : [])
+    ];
   }
 
   const skip = (page - 1) * limit;
@@ -95,6 +135,7 @@ const approvePG = asyncHandler(async (req, res) => {
   ).populate('owner', 'name email');
 
   if (!pg) return res.status(404).json({ success: false, message: 'PG not found' });
+  notificationTrigger.onPGApproved(pg).catch(() => {});
   successResponse(res, 'PG approved successfully', { pg });
 });
 
@@ -109,6 +150,7 @@ const rejectPG = asyncHandler(async (req, res) => {
     { new: true }
   );
   if (!pg) return res.status(404).json({ success: false, message: 'PG not found' });
+  notificationTrigger.onPGRejected(pg, reason).catch(() => {});
   successResponse(res, 'PG rejected', { pg });
 });
 
@@ -232,4 +274,104 @@ const createOwner = asyncHandler(async (req, res) => {
   successResponse(res, 'Owner created successfully', { user: user.toSafeObject() }, 201);
 });
 
-module.exports = { getAllPGs, approvePG, rejectPG, toggleVerify, removePG, getAllUsers, suspendUser, deleteUser, getAnalytics, createOwner };
+/**
+ * @route PUT /api/v1/admin/users/:id
+ */
+const updateUser = asyncHandler(async (req, res) => {
+  const { name, phone, role } = req.body;
+  const User = require('../models/User.model');
+
+  const user = await User.findById(req.params.id);
+  if (!user) {
+    return res.status(404).json({ success: false, message: 'User not found' });
+  }
+
+  if (name !== undefined) user.name = name;
+  if (phone !== undefined) {
+    if (phone) {
+      const existing = await User.findOne({ phone, _id: { $ne: req.params.id } });
+      if (existing) {
+        return res.status(409).json({ success: false, message: 'A user with this phone number already exists' });
+      }
+    }
+    user.phone = phone || undefined;
+  }
+  if (role !== undefined) {
+    if (!['admin', 'owner', 'tenant', 'staff', 'property_manager'].includes(role)) {
+      return res.status(400).json({ success: false, message: 'Invalid role' });
+    }
+    user.role = role;
+  }
+
+  await user.save();
+  successResponse(res, 'User updated successfully', { user: user.toSafeObject() });
+});
+
+/**
+ * @route PUT /api/v1/admin/users/:id/reset-password
+ */
+const resetPassword = asyncHandler(async (req, res) => {
+  const { password } = req.body;
+  if (!password || password.length < 6) {
+    return res.status(400).json({ success: false, message: 'Password must be at least 6 characters' });
+  }
+
+  const User = require('../models/User.model');
+  const user = await User.findById(req.params.id);
+  if (!user) {
+    return res.status(404).json({ success: false, message: 'User not found' });
+  }
+
+  user.password = password;
+  await user.save();
+
+  successResponse(res, 'Password reset successfully', { user: user.toSafeObject() });
+});
+
+/**
+ * @route PUT /api/v1/admin/pgs/:id
+ * @desc  Admin direct edit for any PG listing
+ */
+const updatePGByAdmin = asyncHandler(async (req, res) => {
+  const PG = require('../models/PG.model');
+  const pg = await PG.findById(req.params.id);
+
+  if (!pg) {
+    return res.status(404).json({ success: false, message: 'PG listing not found' });
+  }
+
+  const updateData = { ...req.body };
+  if (updateData.address || updateData.area || updateData.city) {
+    try {
+      const { geocodeAddress } = require('../utils/geocoder');
+      const fullAddress = `${updateData.address || pg.address}, ${updateData.area || pg.area}, ${updateData.city || pg.city}`;
+      const coords = await geocodeAddress(fullAddress);
+      if (coords) {
+        updateData.latitude = coords.latitude;
+        updateData.longitude = coords.longitude;
+        updateData.location = {
+          type: 'Point',
+          coordinates: [coords.longitude, coords.latitude]
+        };
+        if (coords.fullAddress) updateData.fullAddress = coords.fullAddress;
+        if (coords.postalCode) updateData.postalCode = coords.postalCode;
+        if (coords.country) updateData.country = coords.country;
+        if (coords.state) updateData.state = coords.state;
+        if (coords.district) updateData.district = coords.district;
+        if (coords.placeId) updateData.googlePlaceId = coords.placeId;
+      }
+    } catch (err) {
+      console.error('Geocoding error in admin updatePG:', err);
+    }
+  }
+
+  const updatedPG = await PG.findByIdAndUpdate(
+    req.params.id,
+    { $set: updateData },
+    { new: true, runValidators: true }
+  ).populate('owner', 'name email phone');
+
+  successResponse(res, 'PG listing updated successfully by Admin', { pg: updatedPG });
+});
+
+module.exports = { getAllPGs, approvePG, rejectPG, toggleVerify, removePG, getAllUsers, suspendUser, deleteUser, getAnalytics, createOwner, updateUser, resetPassword, updatePGByAdmin };

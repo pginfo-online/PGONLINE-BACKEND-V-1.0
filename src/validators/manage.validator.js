@@ -112,10 +112,10 @@ const addExpenseSchema = z.object({
 
 // Hiring validation schemas
 const createJobPostSchema = z.object({
-  title: z.string().min(3).max(200),
+  title: z.string().min(2, 'Job title must be at least 2 characters').max(200),
   role: z.enum(['cook', 'cleaner', 'security', 'manager', 'electrician', 'plumber', 'other']),
   customRole: z.string().optional(),
-  description: z.string().min(10).max(2000),
+  description: z.string().min(3, 'Description must be at least 3 characters').max(2000),
   requirements: z.string().max(1000).optional(),
   salaryMin: z.number().min(0).optional(),
   salaryMax: z.number().min(0).optional(),
@@ -126,6 +126,7 @@ const createJobPostSchema = z.object({
   food: z.boolean().optional(),
   workingHours: z.string().optional(),
   shiftType: z.enum(['full_time', 'part_time', 'contract']).optional(),
+  bannerImage: z.string().optional().or(z.literal('')),
 });
 
 const applyJobSchema = z.object({

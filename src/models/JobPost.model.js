@@ -37,6 +37,11 @@ const jobPostSchema = new mongoose.Schema(
       trim: true,
       maxlength: [2000, 'Description cannot exceed 2000 characters'],
     },
+    bannerImage: {
+      type: String,
+      trim: true,
+      default: null,
+    },
     requirements: {
       type: String,
       trim: true,

@@ -4,6 +4,7 @@ const RentRecord  = require('../../models/RentRecord.model');
 const Tenant      = require('../../models/Tenant.model');
 const PG          = require('../../models/PG.model');
 const rentService = require('../../services/manage/rent.service');
+const notificationTrigger = require('../../services/notification/notification.trigger');
 
 // ─── Generate Monthly Rent ────────────────────────────────────────────────────
 exports.generateRent = asyncHandler(async (req, res) => {
@@ -17,6 +18,10 @@ exports.generateRent = asyncHandler(async (req, res) => {
   if (!month || !year) return errorResponse(res, 'month and year are required', 400);
 
   const result = await rentService.generateMonthlyRent(pgId, ownerId, month, year, dueDayOfMonth || 5);
+  // Notify tenants for each created rent record
+  if (result.records && result.records.length > 0) {
+    result.records.forEach(rec => notificationTrigger.onRentGenerated(rec).catch(() => {}));
+  }
   return successResponse(res, `Rent generated: ${result.created} created, ${result.skipped} skipped`, result);
 });
 

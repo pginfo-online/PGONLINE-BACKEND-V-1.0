@@ -5,6 +5,7 @@ const Bed     = require('../../models/Bed.model');
 const Room    = require('../../models/Room.model');
 const PG      = require('../../models/PG.model');
 const User    = require('../../models/User.model');
+const notificationTrigger = require('../../services/notification/notification.trigger');
 
 // ─── List Tenants ─────────────────────────────────────────────────────────────
 exports.getTenants = asyncHandler(async (req, res) => {
@@ -83,6 +84,7 @@ exports.addTenant = asyncHandler(async (req, res) => {
     isLinkedToUser: !!linkedUser,
   });
 
+  notificationTrigger.onTenantAdded(tenant, pg).catch(() => {});
   return successResponse(res, 'Tenant added successfully', tenant, 201);
 });
 
@@ -152,6 +154,7 @@ exports.assignBed = asyncHandler(async (req, res) => {
   tenant.status   = 'active';
   await tenant.save();
 
+  notificationTrigger.onBedAssigned(tenant).catch(() => {});
   return successResponse(res, 'Bed assigned to tenant', { tenant, bed });
 });
 
@@ -183,6 +186,7 @@ exports.vacateTenant = asyncHandler(async (req, res) => {
   tenant.bed             = null;
   await tenant.save();
 
+  notificationTrigger.onTenantVacated(tenant).catch(() => {});
   return successResponse(res, 'Tenant vacated successfully', tenant);
 });
 

@@ -357,13 +357,115 @@ const sendOtpSms = async (phone, otpCode) => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Send OTP via WhatsApp using Ping4SMS route=6
+ * Send OTP via WhatsApp using Meta Business API (preferred) or Ping4SMS (fallback)
  * Falls back gracefully — never throws; logs errors only.
- * @param {string} phone - 10-digit Indian mobile number
+ * @param {string} phone - 10-digit or 12-digit Indian mobile number
  * @param {string} otpCode
- * @returns {{ success: boolean, channel: 'whatsapp', error?: string }}
+ * @returns {{ success: boolean, channel: 'whatsapp', messageId?: string, error?: string }}
  */
 const sendOtpWhatsApp = async (phone, otpCode) => {
+  // 1. Check for Meta WhatsApp Business API credentials
+  const metaAccessToken = process.env.META_WHATSAPP_ACCESS_TOKEN || process.env.WHATSAPP_ACCESS_TOKEN;
+  const metaPhoneNumberId = process.env.META_WHATSAPP_PHONE_NUMBER_ID || process.env.WHATSAPP_PHONE_NUMBER_ID;
+  const metaTemplateName = process.env.META_WHATSAPP_TEMPLATE_NAME || process.env.WHATSAPP_TEMPLATE_NAME || 'pginfo_login_otp';
+  const metaTemplateLang = process.env.META_WHATSAPP_TEMPLATE_LANG || process.env.WHATSAPP_TEMPLATE_LANG || 'en_US';
+
+  // Normalize phone to E.164-like format (e.g. 91XXXXXXXXXX) for Meta API and consistent fallback
+  let normalizedPhone = String(phone).replace(/\D/g, '');
+  if (normalizedPhone.length === 10) {
+    normalizedPhone = `91${normalizedPhone}`;
+  }
+  if (normalizedPhone.startsWith('0') && normalizedPhone.length === 11) {
+    normalizedPhone = `91${normalizedPhone.substring(1)}`;
+  }
+
+  if (metaAccessToken && metaPhoneNumberId) {
+    if (!normalizedPhone.startsWith('91') || normalizedPhone.length !== 12) {
+      logger.error(`Invalid phone number for Meta WhatsApp: ${phone}`);
+      return { success: false, channel: 'whatsapp', error: 'Invalid phone number format' };
+    }
+
+    const url = `https://graph.facebook.com/v25.0/${metaPhoneNumberId}/messages`;
+    const payload = {
+      messaging_product: 'whatsapp',
+      to: normalizedPhone,
+      type: 'template',
+      template: {
+        name: metaTemplateName,
+        language: {
+          code: metaTemplateLang,
+        },
+        components: [
+          {
+            type: 'body',
+            parameters: [
+              {
+                type: 'text',
+                text: otpCode,
+              },
+            ],
+          },
+          {
+            type: 'button',
+            sub_type: 'url',
+            index: '0',
+            parameters: [
+              {
+                type: 'text',
+                text: otpCode,
+              },
+            ],
+          },
+        ],
+      },
+    };
+
+    try {
+      logger.info(`Sending Meta WhatsApp OTP to ${normalizedPhone} using template ${metaTemplateName}`);
+      const response = await axios.post(url, payload, {
+        headers: {
+          Authorization: `Bearer ${metaAccessToken}`,
+          'Content-Type': 'application/json',
+        },
+        timeout: 15000,
+      });
+
+      const data = response.data;
+      if (data && data.messages && data.messages.length > 0) {
+        logger.info(`Meta WhatsApp OTP sent successfully. Msg ID: ${data.messages[0].id}`);
+        return {
+          success: true,
+          channel: 'whatsapp',
+          messageId: data.messages[0].id,
+        };
+      } else {
+        logger.warn(`Meta WhatsApp API returned unexpected response format: ${JSON.stringify(data)}`);
+        return {
+          success: false,
+          channel: 'whatsapp',
+          error: 'Unexpected response format from Meta API',
+        };
+      }
+    } catch (err) {
+      const errorData = err.response?.data?.error;
+      const errorMsg = errorData?.message || err.message;
+      const errorCode = errorData?.code;
+      const errorType = errorData?.type;
+      const fbTraceId = errorData?.fbtrace_id;
+      
+      logger.error(
+        `Meta WhatsApp API delivery failed for ${normalizedPhone}. ` +
+        `Error: ${errorMsg} (Code: ${errorCode}, Type: ${errorType}, TraceID: ${fbTraceId})`
+      );
+      return {
+        success: false,
+        channel: 'whatsapp',
+        error: `Meta API Error: ${errorMsg} (Code: ${errorCode})`,
+      };
+    }
+  }
+
+  // 2. Fall back to Ping4SMS route=6
   const baseUrl = process.env.PING4SMS_BASE_URL;
   const apiKey = process.env.PING4SMS_API_KEY;
   const senderId = process.env.PING4SMS_WHATSAPP_SENDER_ID || process.env.PING4SMS_SENDER_ID;
@@ -371,15 +473,15 @@ const sendOtpWhatsApp = async (phone, otpCode) => {
   const templateId = process.env.PING4SMS_WHATSAPP_TEMPLATE_ID;
 
   if (!baseUrl || !apiKey || !senderId) {
-    logger.warn('Ping4SMS WhatsApp credentials not configured — skipping WhatsApp delivery.');
+    logger.warn('WhatsApp credentials (Meta & Ping4SMS) not configured — skipping WhatsApp delivery.');
     if (
       process.env.NODE_ENV === 'development' ||
       process.env.NODE_ENV === 'developement'
     ) {
-      logger.info(`[DEV FALLBACK] WhatsApp OTP for ${phone}: ${otpCode}`);
+      logger.info(`[DEV FALLBACK] WhatsApp OTP for ${normalizedPhone}: ${otpCode}`);
       return { success: true, channel: 'whatsapp', devFallback: true };
     }
-    return { success: false, channel: 'whatsapp', error: 'WhatsApp not configured' };
+    return { success: false, channel: 'whatsapp', error: 'WhatsApp configuration missing' };
   }
 
   const message =
@@ -392,7 +494,7 @@ const sendOtpWhatsApp = async (phone, otpCode) => {
     key: apiKey,
     route,
     sender: senderId,
-    number: phone,
+    number: normalizedPhone,
     sms: message,
     ...(templateId &&
       templateId !== 'YOUR_WHATSAPP_DLT_TEMPLATE_ID_HERE' && { templateid: templateId }),
@@ -405,15 +507,15 @@ const sendOtpWhatsApp = async (phone, otpCode) => {
     const responseData = response.data?.toString().trim();
 
     if (responseData && /^1\d{2}$/.test(responseData)) {
-      logger.warn(`Ping4SMS WhatsApp error for ${phone}: code ${responseData}`);
+      logger.warn(`Ping4SMS WhatsApp error for ${normalizedPhone}: code ${responseData}`);
       return { success: false, channel: 'whatsapp', error: `Gateway error ${responseData}` };
     }
 
-    logger.info(`WhatsApp OTP sent to ${phone}. Message ID: ${responseData}`);
+    logger.info(`WhatsApp OTP sent to ${normalizedPhone} via Ping4SMS. Message ID: ${responseData}`);
     return { success: true, channel: 'whatsapp', messageId: responseData };
   } catch (err) {
     logger.error(
-      `WhatsApp delivery failed for ${phone}: ${err.response?.data || err.message}`
+      `WhatsApp delivery failed via Ping4SMS for ${normalizedPhone}: ${err.response?.data || err.message}`
     );
     // Graceful — don't throw; SMS was already sent
     return { success: false, channel: 'whatsapp', error: err.message };
@@ -502,8 +604,39 @@ const createOtpUnified = async ({ email, phone, sendWhatsApp = true }) => {
     throw Object.assign(new Error('Email or phone number is required'), { statusCode: 400 });
   }
 
-  const emailNorm = email ? email.toLowerCase().trim() : undefined;
-  const phoneNorm = phone ? phone.trim() : undefined;
+  let emailNorm = email ? email.toLowerCase().trim() : undefined;
+  let phoneNorm = phone ? phone.trim() : undefined;
+
+  // Validate and normalize email
+  if (emailNorm) {
+    const isEmail = /\S+@\S+\.\S+/.test(emailNorm);
+    if (!isEmail) {
+      throw Object.assign(new Error('Invalid email address format.'), { statusCode: 400 });
+    }
+  }
+
+  // Validate and normalize phone to 10-digit format for consistent query and DB storage
+  if (phoneNorm) {
+    const digits = phoneNorm.replace(/\D/g, '');
+    let parsed10Digits = '';
+
+    if (digits.length === 10 && /^[6-9]\d{9}$/.test(digits)) {
+      parsed10Digits = digits;
+    } else if (digits.length === 11 && digits.startsWith('0') && /^[6-9]\d{9}$/.test(digits.slice(1))) {
+      parsed10Digits = digits.slice(1);
+    } else if (digits.length === 12 && digits.startsWith('91') && /^[6-9]\d{9}$/.test(digits.slice(2))) {
+      parsed10Digits = digits.slice(2);
+    }
+
+    if (!parsed10Digits) {
+      throw Object.assign(
+        new Error('Invalid Indian mobile number. Enter a valid 10-digit mobile number.'),
+        { statusCode: 400 }
+      );
+    }
+    phoneNorm = parsed10Digits;
+  }
+
   const query = emailNorm ? { email: emailNorm } : { phone: phoneNorm };
 
   await applyOtpThrottle(query, 'unified');

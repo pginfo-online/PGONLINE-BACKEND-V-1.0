@@ -10,6 +10,7 @@ const connectDB = require('./src/config/db');
 const v1Routes = require('./src/routes/v1/index');
 const errorMiddleware = require('./src/middlewares/error.middleware');
 const { logger } = require('./src/utils/logger');
+const { startScheduler } = require('./src/services/notification/notification.scheduler');
 
 const app = express();
 const PORT = process.env.PORT || 5001;
@@ -28,8 +29,11 @@ process.on('unhandledRejection', (reason, promise) => {
 // ─── Trust Proxy for Render / Heroku ──────────────────────────────────────────
 app.set('trust proxy', 1);
 
-// ─── Connect Database ─────────────────────────────────────────────────────────
-connectDB();
+// ─── Connect Database ───────────────────────────────────────────────────
+connectDB().then(() => {
+  // Start notification scheduler after DB is ready
+  startScheduler();
+});
 
 // ─── Security Middleware ──────────────────────────────────────────────────────
 app.use(helmet({
@@ -76,6 +80,10 @@ const limiter = rateLimit({
 app.use('/api/', limiter);
 
 // ─── Body Parsing ─────────────────────────────────────────────────────────────
+// Raw body capture for Razorpay webhook signature verification
+app.use('/api/v1/manage/payments/webhook', express.raw({ type: 'application/json', limit: '1mb' }),
+  (req, _res, next) => { req.rawBody = req.body; req.body = JSON.parse(req.body); next(); }
+);
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 

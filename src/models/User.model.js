@@ -68,6 +68,42 @@ const userSchema = new mongoose.Schema(
       type: String,
       default: null,
     },
+    altPhone: {
+      type: String,
+      trim: true,
+      match: [/^[6-9]\d{9}$/, 'Please enter a valid Indian mobile number'],
+      default: null,
+    },
+    gender: {
+      type: String,
+      enum: ['male', 'female', 'other', 'prefer_not_to_say'],
+      default: null,
+    },
+    dob: {
+      type: Date,
+      default: null,
+    },
+    address: {
+      type: String,
+      trim: true,
+      default: null,
+    },
+    city: {
+      type: String,
+      trim: true,
+      default: null,
+    },
+    state: {
+      type: String,
+      trim: true,
+      default: null,
+    },
+    pincode: {
+      type: String,
+      trim: true,
+      match: [/^\d{6}$/, 'Please enter a valid 6-digit Indian pincode'],
+      default: null,
+    },
 
     // ─── Activity ─────────────────────────────────────────────────────────────
     lastLogin: {

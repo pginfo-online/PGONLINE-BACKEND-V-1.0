@@ -3,6 +3,7 @@ const { successResponse, errorResponse, paginatedResponse } = require('../../uti
 const JobPost        = require('../../models/JobPost.model');
 const JobApplication = require('../../models/JobApplication.model');
 const PG             = require('../../models/PG.model');
+const notificationTrigger = require('../../services/notification/notification.trigger');
 
 // ─── Create Job Post (Owner) ──────────────────────────────────────────────────
 exports.createJobPost = asyncHandler(async (req, res) => {
@@ -21,6 +22,7 @@ exports.createJobPost = asyncHandler(async (req, res) => {
     ...req.body,
   });
 
+  notificationTrigger.onJobPosted({ ...jobPost.toObject(), pg }).catch(() => {});
   return successResponse(res, 'Job post created successfully', jobPost, 201);
 });
 
@@ -45,7 +47,7 @@ exports.updateJobPost = asyncHandler(async (req, res) => {
     'title', 'role', 'customRole', 'description', 'requirements',
     'salaryMin', 'salaryMax', 'salaryFrequency', 'genderPreference',
     'experienceRequired', 'accommodation', 'food', 'workingHours',
-    'shiftType', 'status',
+    'shiftType', 'status', 'bannerImage',
   ];
   ALLOWED.forEach((key) => { if (req.body[key] !== undefined) job[key] = req.body[key]; });
 
@@ -82,6 +84,7 @@ exports.updateApplicationStatus = asyncHandler(async (req, res) => {
   }
 
   await application.save();
+  notificationTrigger.onJobApplicationStatusUpdated(application, { _id: application.jobPost }).catch(() => {});
   return successResponse(res, `Application status updated to ${status}`, application);
 });
 
@@ -155,5 +158,9 @@ exports.applyForJob = asyncHandler(async (req, res) => {
   job.applications += 1;
   await job.save();
 
+  notificationTrigger.onJobApplicationReceived(
+    application,
+    { ...job.toObject(), owner: job.owner }
+  ).catch(() => {});
   return successResponse(res, 'Application submitted successfully', application, 201);
 });
