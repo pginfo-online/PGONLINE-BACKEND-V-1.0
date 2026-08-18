@@ -34,6 +34,8 @@ const createPGSchema = z.object({
   noticePeriod: nullableCoercedNumber,
   minStay: nullableCoercedNumber,
   maxStay: nullableCoercedNumber,
+  floors: nullableCoercedNumber,
+  totalRooms: nullableCoercedNumber,
   yearlyPricing: nullableCoercedNumber,
   monthlyPricing: nullableCoercedNumber,
   roomConfigs: z.array(z.object({
