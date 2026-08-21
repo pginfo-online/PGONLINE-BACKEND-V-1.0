@@ -11,6 +11,7 @@ const v1Routes = require('./src/routes/v1/index');
 const errorMiddleware = require('./src/middlewares/error.middleware');
 const { logger } = require('./src/utils/logger');
 const { startScheduler } = require('./src/services/notification/notification.scheduler');
+const { startExportScheduler } = require('./src/services/export.scheduler');
 
 const app = express();
 const PORT = process.env.PORT || 5001;
@@ -31,8 +32,9 @@ app.set('trust proxy', 1);
 
 // ─── Connect Database ───────────────────────────────────────────────────
 connectDB().then(() => {
-  // Start notification scheduler after DB is ready
+  // Start schedulers after DB is ready
   startScheduler();
+  startExportScheduler();
 });
 
 // ─── Security Middleware ──────────────────────────────────────────────────────

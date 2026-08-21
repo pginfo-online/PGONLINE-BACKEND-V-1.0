@@ -218,8 +218,8 @@ const getMyPGsPaginated = asyncHandler(async (req, res) => {
  * Gets real-time suggestions for search bar
  */
 const getSuggestions = asyncHandler(async (req, res) => {
-  const { q } = req.query;
-  const result = await pgService.getSuggestions(q);
+  const { q, sessiontoken } = req.query;
+  const result = await pgService.getSuggestions(q, sessiontoken);
   successResponse(res, 'Suggestions retrieved', result);
 });
 

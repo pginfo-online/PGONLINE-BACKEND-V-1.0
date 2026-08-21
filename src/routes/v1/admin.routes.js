@@ -3,7 +3,7 @@ const router = express.Router();
 const { getAllPGs, approvePG, rejectPG, toggleVerify, removePG, getAllUsers, suspendUser, deleteUser, getAnalytics, createOwner, updateUser, resetPassword, updatePGByAdmin } = require('../../controllers/admin.controller');
 const { getAllUpdateRequests, getUpdateRequestById, approveUpdateRequest, rejectUpdateRequest, requestCorrection } = require('../../controllers/pgUpdateRequest.controller');
 const { adminGetAllMeetups, adminToggleApproval, adminDeleteMeetup } = require('../../controllers/meetup.controller');
-const { directExportPGs, initiateExportJob, getExportJobs, getExportJobStatus, deleteExportJob } = require('../../controllers/adminExport.controller');
+const { directExportPGs, initiateExportJob, getExportJobs, getExportJobStatus, deleteExportJob, getExportScheduleConfig, updateExportScheduleConfig, triggerScheduledExportNow } = require('../../controllers/adminExport.controller');
 const { protect, authorize } = require('../../middlewares/auth.middleware');
 const validate = require('../../middlewares/validate.middleware');
 const { createOwnerSchema } = require('../../validators/auth.validator');
@@ -14,12 +14,17 @@ const adminNotifCtrl = require('../../controllers/admin.notification.controller'
 // All admin routes require admin role
 router.use(protect, authorize('admin'));
 
-// Export PG Listings
-router.get('/pgs/export', validate(exportQuerySchema, 'query'), directExportPGs);
-router.post('/pgs/export/job', validate(initiateJobSchema, 'body'), initiateExportJob);
+// Export PG Listings & Datasets
+router.get('/pgs/export', directExportPGs);
+router.post('/pgs/export/job', initiateExportJob);
 router.get('/pgs/export/jobs', getExportJobs);
 router.get('/pgs/export/jobs/:id', getExportJobStatus);
 router.delete('/pgs/export/jobs/:id', deleteExportJob);
+
+// Server-side 9:00 AM Export Schedule
+router.get('/pgs/export/schedule', getExportScheduleConfig);
+router.put('/pgs/export/schedule', updateExportScheduleConfig);
+router.post('/pgs/export/schedule/trigger', triggerScheduledExportNow);
 
 router.get('/pgs', getAllPGs);
 router.put('/pgs/:id', updatePGByAdmin);

@@ -2,13 +2,32 @@ const PG = require('../models/PG.model');
 const PGUpdateRequest = require('../models/PGUpdateRequest.model');
 
 /**
+ * Escape special regular expression characters to prevent syntax errors
+ */
+const escapeRegex = (str) => String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const safeRegex = (str, flags = 'i') => new RegExp(escapeRegex(str), flags);
+
+/**
  * Build MongoDB query from search params
  */
 const buildSearchQuery = (params) => {
   const query = { status: 'approved' };
 
   if (params.city) query.city = params.city;
-  if (params.area) query.area = { $regex: params.area, $options: 'i' };
+
+  // Multi-area support: ?areas=Baner,Wakad,Hinjewadi (up to 3)
+  if (params.areas) {
+    const areaList = String(params.areas)
+      .split(',')
+      .map((a) => a.trim())
+      .filter(Boolean)
+      .slice(0, 3);
+    if (areaList.length > 0) {
+      query.area = { $in: areaList.map((a) => safeRegex(a, 'i')) };
+    }
+  } else if (params.area && params.area.trim()) {
+    query.area = { $regex: escapeRegex(params.area.trim()), $options: 'i' };
+  }
   if (params.food) query.food = params.food;
   if (params.ac !== undefined) query.ac = params.ac === 'true';
   if (params.gender) query.gender = { $in: [params.gender, 'any'] };
@@ -62,9 +81,26 @@ const buildSearchQuery = (params) => {
     }
   }
 
-  // Text search
-  if (params.q) {
-    query.$text = { $search: params.q };
+  // Text search (Resilient substring matching across multiple fields)
+  if (params.q && params.q.trim()) {
+    const qTerm = params.q.trim();
+    const qRegex = safeRegex(qTerm, 'i');
+    const textConditions = [
+      { name: qRegex },
+      { area: qRegex },
+      { fullAddress: qRegex },
+      { landmark: qRegex },
+      { city: qRegex },
+    ];
+    if (query.$or) {
+      query.$and = [
+        { $or: query.$or },
+        { $or: textConditions },
+      ];
+      delete query.$or;
+    } else {
+      query.$or = textConditions;
+    }
   }
 
   return query;
@@ -397,78 +433,148 @@ const aiSearchPGs = async (intentParams) => {
     .lean();
 };
 
+// ─── In-Memory Suggestions Cache (TTL: 5 minutes) ─────────────────────────
+const _suggestionsCache = new Map();
+const SUGGESTIONS_CACHE_TTL = 5 * 60 * 1000; // 5 min
+
+const _getCachedSuggestions = (key) => {
+  const entry = _suggestionsCache.get(key);
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) {
+    _suggestionsCache.delete(key);
+    return null;
+  }
+  return entry.data;
+};
+
+const _setCachedSuggestions = (key, data) => {
+  // Evict old entries if cache grows too large (simple LRU-lite)
+  if (_suggestionsCache.size > 200) {
+    const firstKey = _suggestionsCache.keys().next().value;
+    _suggestionsCache.delete(firstKey);
+  }
+  _suggestionsCache.set(key, { data, expiresAt: Date.now() + SUGGESTIONS_CACHE_TTL });
+};
+
 /**
- * Get real-time autocomplete suggestions for search
+ * Normalize a suggestion text for deduplication.
+ * Strips city/state suffixes like ", Maharashtra, India" and lowercases.
  */
-const getSuggestions = async (query) => {
+const _normalizeText = (text) =>
+  text
+    .toLowerCase()
+    .replace(/,\s*(maharashtra|karnataka|delhi|tamil\s*nadu|telangana|west\s*bengal|rajasthan|gujarat|india)[^,]*/gi, '')
+    .replace(/[^a-z0-9 ]/g, '')
+    .trim();
+/**
+ * Get real-time autocomplete suggestions for search.
+ * Improved: in-memory cache (5 min TTL), session tokens, smarter dedup, local-first ordering.
+ *
+ * @param {string} query        - The search text typed by user
+ * @param {string} sessiontoken - UUID generated per search session (reduces Google billing)
+ */
+const getSuggestions = async (query, sessiontoken) => {
   if (!query || query.length < 2) return { suggestions: [] };
 
-  const regex = new RegExp(query, 'i');
+  const normalizedQuery = query.trim().toLowerCase();
 
-  // Search by name, area, landmark, fullAddress
-  const pgs = await PG.find({
-    $or: [
-      { name: regex },
-      { area: regex },
-      { fullAddress: regex },
-      { landmark: regex },
-      { 'nearbyPlaces.name': regex }
-    ],
-    status: 'approved'
-  })
-    .select('name area city fullAddress landmark nearbyPlaces')
-    .limit(10)
-    .lean();
+  // ── 1. Check cache ─────────────────────────────────────────────────────────
+  const cached = _getCachedSuggestions(normalizedQuery);
+  if (cached) return { suggestions: cached };
 
+  const regex = safeRegex(query.trim(), 'i');
   const suggestionsMap = new Map();
 
-  pgs.forEach(pg => {
-    // Check if area matches
-    if (regex.test(pg.area)) {
-      const key = `area:${pg.area}`;
-      if (!suggestionsMap.has(key)) {
-        suggestionsMap.set(key, { text: pg.area, type: 'area', city: pg.city });
-      }
-    }
-    // Check if name matches
-    if (regex.test(pg.name)) {
-      const key = `pg_name:${pg.name}`;
-      if (!suggestionsMap.has(key)) {
-        suggestionsMap.set(key, { text: pg.name, type: 'pg_name', pgId: pg._id });
-      }
-    }
-    if (pg.landmark && regex.test(pg.landmark)) {
-      const key = `landmark:${pg.landmark}`;
-      if (!suggestionsMap.has(key)) {
-        suggestionsMap.set(key, { text: pg.landmark, type: 'landmark', city: pg.city });
-      }
-    }
-  });
+  // ── 2. Local DB suggestions (fast, always shown first) ────────────────────
+  try {
+    const pgs = await PG.find({
+      $or: [
+        { name: regex },
+        { area: regex },
+        { fullAddress: regex },
+        { landmark: regex },
+        { 'nearbyPlaces.name': regex },
+      ],
+      status: 'approved',
+    })
+      .select('name area city fullAddress landmark nearbyPlaces')
+      .limit(15)
+      .lean();
 
-  // Add Google Places Autocomplete if configured
+    pgs.forEach((pg) => {
+      if (regex.test(pg.area)) {
+        const norm = _normalizeText(pg.area);
+        const key = `area:${norm}`;
+        if (!suggestionsMap.has(key)) {
+          suggestionsMap.set(key, { text: pg.area, type: 'area', city: pg.city, source: 'local' });
+        }
+      }
+      if (regex.test(pg.name)) {
+        const norm = _normalizeText(pg.name);
+        const key = `pg_name:${norm}`;
+        if (!suggestionsMap.has(key)) {
+          suggestionsMap.set(key, { text: pg.name, type: 'pg_name', pgId: pg._id, source: 'local' });
+        }
+      }
+      if (pg.landmark && regex.test(pg.landmark)) {
+        const norm = _normalizeText(pg.landmark);
+        const key = `landmark:${norm}`;
+        if (!suggestionsMap.has(key)) {
+          suggestionsMap.set(key, { text: pg.landmark, type: 'landmark', city: pg.city, source: 'local' });
+        }
+      }
+    });
+  } catch (dbErr) {
+    console.warn('[Suggestions] Local DB search warning:', dbErr.message);
+  }
+
+  // ── 3. Google Places (appended after local, deduplicated) ─────────────────
   const googleApiKey = process.env.GOOGLE_MAPS_API_KEY;
   if (googleApiKey) {
     try {
       const axios = require('axios');
-      const response = await axios.get('https://maps.googleapis.com/maps/api/place/autocomplete/json', {
-        params: { input: query, key: googleApiKey, components: 'country:in' },
-        timeout: 2500
-      });
+      const googleParams = {
+        input: query,
+        key: googleApiKey,
+        components: 'country:in',
+        types: '(regions)',
+      };
+      // Session token groups autocomplete keystrokes → reduces Google billing ~10x
+      if (sessiontoken) googleParams.sessiontoken = sessiontoken;
+
+      const response = await axios.get(
+        'https://maps.googleapis.com/maps/api/place/autocomplete/json',
+        { params: googleParams, timeout: 2500 }
+      );
+
       if (response.data && response.data.predictions) {
-        response.data.predictions.forEach(pred => {
-          suggestionsMap.set(`google:${pred.place_id}`, {
-            text: pred.description,
-            type: 'google_place',
-            placeId: pred.place_id
-          });
+        response.data.predictions.forEach((pred) => {
+          const mainText = pred.structured_formatting?.main_text || pred.description;
+          const norm = _normalizeText(mainText);
+          // Only add if not already covered by a local result (avoids "Baner" + "Baner, Pune" duplicates)
+          if (!suggestionsMap.has(`area:${norm}`) && !suggestionsMap.has(`landmark:${norm}`)) {
+            suggestionsMap.set(`google:${pred.place_id}`, {
+              text: mainText,
+              subtext: pred.structured_formatting?.secondary_text || '',
+              type: 'google_place',
+              placeId: pred.place_id,
+              source: 'google',
+            });
+          }
         });
       }
     } catch (e) {
-      console.error('Places Autocomplete Error:', e.message);
+      // Graceful degradation — Google timeout/error → return local results only
+      console.warn('[Suggestions] Google Places unavailable:', e.message);
     }
   }
 
-  return { suggestions: Array.from(suggestionsMap.values()).slice(0, 10) };
+  const results = Array.from(suggestionsMap.values()).slice(0, 10);
+
+  // ── 4. Cache merged result ────────────────────────────────────────────────
+  _setCachedSuggestions(normalizedQuery, results);
+
+  return { suggestions: results };
 };
 
 module.exports = { getPGs, getPGById, createPG, updatePG, deletePG, aiSearchPGs, buildSearchQuery, getSuggestions };

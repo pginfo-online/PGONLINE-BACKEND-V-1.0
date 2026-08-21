@@ -3,63 +3,59 @@ const path = require('path');
 const asyncHandler = require('../utils/asyncHandler');
 const { successResponse, errorResponse, paginatedResponse } = require('../utils/apiResponse');
 const PG = require('../models/PG.model');
+const User = require('../models/User.model');
+const Lead = require('../models/Lead.model');
+const RentRecord = require('../models/RentRecord.model');
 const ExportJob = require('../models/ExportJob.model');
+const ExportSchedule = require('../models/ExportSchedule.model');
 const excelService = require('../services/excel.service');
+const { executeScheduledExport } = require('../services/export.scheduler');
 const { cloudinary } = require('../config/cloudinary');
 const { logger } = require('../utils/logger');
 
 /**
  * Runs the background export job: streams database rows into a temp file,
  * uploads to Cloudinary, updates progress, and cleans up temp files.
- * @param {string} jobId - ExportJob ID in database
- * @param {Object} query - MongoDB query filter object
  */
-const runBackgroundExport = async (jobId, query) => {
-  // Update state to processing
+const runBackgroundExport = async (jobId, dataset, query) => {
   await ExportJob.findByIdAndUpdate(jobId, { status: 'processing', progress: 0 });
 
-  // Create temporary exports folder under src/uploads/exports
   const tempDir = path.join(__dirname, '../../uploads/exports');
   if (!fs.existsSync(tempDir)) {
     fs.mkdirSync(tempDir, { recursive: true });
   }
 
-  const tempFilePath = path.join(tempDir, `pg_export_${jobId}.xlsx`);
+  const tempFilePath = path.join(tempDir, `export_${dataset}_${jobId}.xlsx`);
 
   try {
-    const total = await PG.countDocuments(query);
-    let lastProgress = 0;
-
-    // Progress updates throttled to avoid hitting MongoDB too heavily
-    const onProgress = async (processed) => {
-      if (total > 0) {
-        const progress = Math.min(Math.round((processed / total) * 99), 99); // Max 99% until fully uploaded
-        if (progress - lastProgress >= 5) {
-          lastProgress = progress;
-          await ExportJob.findByIdAndUpdate(jobId, { progress });
-        }
-      }
-    };
-
-    // Open file stream and generate the Excel document
     const fileStream = fs.createWriteStream(tempFilePath);
-    
-    // Wrap generatePGExcelStream inside a Promise to block until the stream is closed
+
     await new Promise((resolve, reject) => {
       fileStream.on('error', reject);
-      excelService.generatePGExcelStream(fileStream, query, onProgress)
+      excelService
+        .generateExcelStream({
+          dataset,
+          query,
+          writeStream: fileStream,
+          onProgress: async (processed, total) => {
+            if (total > 0) {
+              const progress = Math.min(Math.round((processed / total) * 98), 98);
+              await ExportJob.findByIdAndUpdate(jobId, { progress });
+            }
+          },
+        })
         .then(resolve)
         .catch(reject);
     });
 
-    // Upload to Cloudinary using resource_type: 'raw' for non-media attachments
+    // Upload to Cloudinary
     const uploadResult = await new Promise((resolve, reject) => {
       cloudinary.uploader.upload(
         tempFilePath,
         {
           resource_type: 'raw',
           folder: 'pginfo/exports',
-          public_id: `pg_export_${jobId}_${Date.now()}.xlsx`,
+          public_id: `export_${dataset}_${jobId}_${Date.now()}.xlsx`,
         },
         (error, result) => {
           if (error) reject(error);
@@ -70,7 +66,6 @@ const runBackgroundExport = async (jobId, query) => {
 
     const fileSize = fs.existsSync(tempFilePath) ? fs.statSync(tempFilePath).size : 0;
 
-    // Mark job as completed
     await ExportJob.findByIdAndUpdate(jobId, {
       status: 'completed',
       progress: 100,
@@ -79,15 +74,14 @@ const runBackgroundExport = async (jobId, query) => {
       completedAt: new Date(),
     });
 
-    logger.info(`Successfully completed background export job: ${jobId}`);
+    logger.info(`Completed export job: ${jobId} (${dataset})`);
   } catch (err) {
     logger.error(`Error in runBackgroundExport for job ${jobId}: ${err.stack}`);
     await ExportJob.findByIdAndUpdate(jobId, {
       status: 'failed',
-      error: err.message || 'Unknown generation error',
+      error: err.message || 'Export generation failed',
     });
   } finally {
-    // Safely delete local temporary file
     if (fs.existsSync(tempFilePath)) {
       try {
         fs.unlinkSync(tempFilePath);
@@ -100,24 +94,22 @@ const runBackgroundExport = async (jobId, query) => {
 
 /**
  * @route GET /api/v1/admin/pgs/export
- * @desc  Stream PG excel file directly to the client
- * @access Private (Admin only)
+ * @desc  Direct stream export file to browser
  */
 const directExportPGs = asyncHandler(async (req, res) => {
+  const dataset = req.query.dataset || 'pgs';
   const query = excelService.parseExportFilters(req.query);
 
   const timestamp = new Date().toISOString().replace(/T/, '_').replace(/\..+/, '').replace(/:/g, '-');
-  const filename = `pg_listings_export_${timestamp}.xlsx`;
+  const filename = `${dataset}_export_${timestamp}.xlsx`;
 
-  // Set streaming headers
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
 
   try {
-    await excelService.generatePGExcelStream(res, query);
+    await excelService.generateExcelStream({ dataset, query, writeStream: res });
   } catch (err) {
     logger.error(`Direct export failed: ${err.stack}`);
-    // If headers were not yet sent, send error response, otherwise end connection abruptly
     if (!res.headersSent) {
       return errorResponse(res, 'Failed to generate Excel export file', 500);
     }
@@ -127,30 +119,34 @@ const directExportPGs = asyncHandler(async (req, res) => {
 
 /**
  * @route POST /api/v1/admin/pgs/export/job
- * @desc  Initiate a background Excel export task
- * @access Private (Admin only)
+ * @desc  Start an asynchronous background export job
  */
 const initiateExportJob = asyncHandler(async (req, res) => {
+  const dataset = req.body.dataset || 'pgs';
   const query = excelService.parseExportFilters(req.body);
 
-  // Check if there are any documents to export first to prevent empty jobs
-  const totalDocs = await PG.countDocuments(query);
+  let totalDocs = 0;
+  if (dataset === 'users') totalDocs = await User.countDocuments(query);
+  else if (dataset === 'leads') totalDocs = await Lead.countDocuments(query);
+  else if (dataset === 'rent') totalDocs = await RentRecord.countDocuments(query);
+  else totalDocs = await PG.countDocuments(query);
+
   if (totalDocs === 0) {
-    return errorResponse(res, 'No PG listings found matching the specified filters', 400);
+    return errorResponse(res, `No records found in dataset '${dataset}' matching specified filters`, 400);
   }
 
-  // Create pending export job tracking record
   const job = await ExportJob.create({
     admin: req.user._id,
+    jobType: 'manual_background',
+    dataset,
     status: 'pending',
     progress: 0,
     filters: req.body,
   });
 
-  // Run the job asynchronously without blocking HTTP response
   setImmediate(() => {
-    runBackgroundExport(job._id, query).catch((err) => {
-      logger.error(`Process runner crash for job ${job._id}: ${err.message}`);
+    runBackgroundExport(job._id, dataset, query).catch((err) => {
+      logger.error(`Export job runner crash for ${job._id}: ${err.message}`);
     });
   });
 
@@ -159,22 +155,29 @@ const initiateExportJob = asyncHandler(async (req, res) => {
 
 /**
  * @route GET /api/v1/admin/pgs/export/jobs
- * @desc  Retrieve list of background export jobs
- * @access Private (Admin only)
+ * @desc  Retrieve list of export jobs
  */
 const getExportJobs = asyncHandler(async (req, res) => {
   const page = Number(req.query.page) || 1;
-  const limit = Math.min(Number(req.query.limit) || 10, 50);
+  const limit = Math.min(Number(req.query.limit) || 15, 50);
   const skip = (page - 1) * limit;
 
+  const filter = {};
+  if (req.query.dataset && req.query.dataset !== 'all') {
+    filter.dataset = req.query.dataset;
+  }
+  if (req.query.jobType && req.query.jobType !== 'all') {
+    filter.jobType = req.query.jobType;
+  }
+
   const [jobs, total] = await Promise.all([
-    ExportJob.find({ admin: req.user._id })
+    ExportJob.find(filter)
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
       .populate('admin', 'name email')
       .lean(),
-    ExportJob.countDocuments({ admin: req.user._id }),
+    ExportJob.countDocuments(filter),
   ]);
 
   const totalPages = Math.ceil(total / limit);
@@ -191,38 +194,88 @@ const getExportJobs = asyncHandler(async (req, res) => {
 
 /**
  * @route GET /api/v1/admin/pgs/export/jobs/:id
- * @desc  Get status details of a specific background export job
- * @access Private (Admin only)
  */
 const getExportJobStatus = asyncHandler(async (req, res) => {
-  const job = await ExportJob.findOne({
-    _id: req.params.id,
-    admin: req.user._id,
-  }).populate('admin', 'name email');
-
+  const job = await ExportJob.findById(req.params.id).populate('admin', 'name email');
   if (!job) {
     return res.status(404).json({ success: false, message: 'Export job not found' });
   }
-
   return successResponse(res, 'Export job status retrieved successfully', { job });
 });
 
 /**
  * @route DELETE /api/v1/admin/pgs/export/jobs/:id
- * @desc  Delete an export job record
- * @access Private (Admin only)
  */
 const deleteExportJob = asyncHandler(async (req, res) => {
-  const job = await ExportJob.findOneAndDelete({
-    _id: req.params.id,
-    admin: req.user._id,
-  });
-
+  const job = await ExportJob.findByIdAndDelete(req.params.id);
   if (!job) {
     return res.status(404).json({ success: false, message: 'Export job not found' });
   }
-
   return successResponse(res, 'Export job record deleted successfully');
+});
+
+/**
+ * @route GET /api/v1/admin/pgs/export/schedule
+ * @desc  Get the persistent 9:00 AM server-side schedule config & status
+ */
+const getExportScheduleConfig = asyncHandler(async (req, res) => {
+  const schedule = await ExportSchedule.getOrCreateSchedule();
+
+  // Compute next 9:00 AM IST execution timestamp
+  const now = new Date();
+  const nextRun = new Date(now);
+  // Convert to IST offset (+5:30)
+  const istOffset = 5.5 * 60 * 60 * 1000;
+  const istNow = new Date(now.getTime() + istOffset);
+
+  const next9AM_IST = new Date(istNow);
+  next9AM_IST.setUTCHours(3, 30, 0, 0); // 09:00 AM IST = 03:30 AM UTC
+
+  if (now >= next9AM_IST) {
+    next9AM_IST.setUTCDate(next9AM_IST.getUTCDate() + 1);
+  }
+
+  return successResponse(res, 'Export schedule retrieved successfully', {
+    schedule: {
+      ...schedule.toObject(),
+      computedNextRunAt: next9AM_IST,
+    },
+  });
+});
+
+/**
+ * @route PUT /api/v1/admin/pgs/export/schedule
+ * @desc  Update schedule settings (enable/disable, dataset, default filters)
+ */
+const updateExportScheduleConfig = asyncHandler(async (req, res) => {
+  const schedule = await ExportSchedule.getOrCreateSchedule();
+
+  if (typeof req.body.isDaily9AMEnabled === 'boolean') {
+    schedule.isDaily9AMEnabled = req.body.isDaily9AMEnabled;
+  }
+  if (req.body.dataset) {
+    schedule.dataset = req.body.dataset;
+  }
+  if (req.body.filters) {
+    schedule.filters = req.body.filters;
+  }
+  schedule.updatedBy = req.user._id;
+
+  await schedule.save();
+  return successResponse(res, 'Export schedule configuration updated successfully', { schedule });
+});
+
+/**
+ * @route POST /api/v1/admin/pgs/export/schedule/trigger
+ * @desc  Manually trigger the 9:00 AM scheduled export task immediately (test run)
+ */
+const triggerScheduledExportNow = asyncHandler(async (req, res) => {
+  const result = await executeScheduledExport({
+    triggeredBy: 'manual_test',
+    user: req.user,
+  });
+
+  return successResponse(res, 'Scheduled export task executed successfully', result);
 });
 
 module.exports = {
@@ -231,4 +284,7 @@ module.exports = {
   getExportJobs,
   getExportJobStatus,
   deleteExportJob,
+  getExportScheduleConfig,
+  updateExportScheduleConfig,
+  triggerScheduledExportNow,
 };

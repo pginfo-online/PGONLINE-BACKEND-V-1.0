@@ -5,7 +5,17 @@ const exportJobSchema = new mongoose.Schema(
     admin: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
-      required: true,
+      required: false, // Optional for automatic server-scheduled jobs
+    },
+    jobType: {
+      type: String,
+      enum: ['manual_direct', 'manual_background', 'daily_9am_schedule'],
+      default: 'manual_background',
+    },
+    dataset: {
+      type: String,
+      enum: ['pgs', 'users', 'leads', 'rent', 'all'],
+      default: 'pgs',
     },
     status: {
       type: String,
