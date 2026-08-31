@@ -1,8 +1,8 @@
 const express = require('express');
 const router = express.Router();
-const { getAllPGs, approvePG, rejectPG, toggleVerify, removePG, getAllUsers, suspendUser, deleteUser, getAnalytics, createOwner, updateUser, resetPassword, updatePGByAdmin } = require('../../controllers/admin.controller');
+const { getAllPGs, approvePG, rejectPG, toggleVerify, removePG, getAllUsers, suspendUser, deleteUser, getAnalytics, createOwner, updateUser, resetPassword, updatePGByAdmin, addUserRole, removeUserRole, setUserRoles } = require('../../controllers/admin.controller');
 const { getAllUpdateRequests, getUpdateRequestById, approveUpdateRequest, rejectUpdateRequest, requestCorrection } = require('../../controllers/pgUpdateRequest.controller');
-const { adminGetAllMeetups, adminToggleApproval, adminDeleteMeetup } = require('../../controllers/meetup.controller');
+const { adminGetAllMeetups, adminGetKPIs, adminLifecycleTransition, adminToggleFeature, adminToggleApproval, adminDeleteMeetup } = require('../../controllers/meetup.controller');
 const { directExportPGs, initiateExportJob, getExportJobs, getExportJobStatus, deleteExportJob, getExportScheduleConfig, updateExportScheduleConfig, triggerScheduledExportNow } = require('../../controllers/adminExport.controller');
 const { protect, authorize } = require('../../middlewares/auth.middleware');
 const validate = require('../../middlewares/validate.middleware');
@@ -40,6 +40,11 @@ router.put('/users/:id/reset-password', resetPassword);
 router.put('/users/:id/suspend', suspendUser);
 router.delete('/users/:id', deleteUser);
 
+// User Role Management (multi-role system)
+router.put('/users/:id/roles', setUserRoles);
+router.post('/users/:id/roles/:role', addUserRole);
+router.delete('/users/:id/roles/:role', removeUserRole);
+
 router.get('/analytics', getAnalytics);
 
 // PG Update Requests
@@ -50,7 +55,10 @@ router.put('/pg-updates/:id/reject', rejectUpdateRequest);
 router.put('/pg-updates/:id/correction', requestCorrection);
 
 // Meetups
+router.get('/meetups/kpis', adminGetKPIs);
 router.get('/meetups', adminGetAllMeetups);
+router.put('/meetups/:id/lifecycle', adminLifecycleTransition);
+router.put('/meetups/:id/feature', adminToggleFeature);
 router.put('/meetups/:id/approve', adminToggleApproval);
 router.delete('/meetups/:id', adminDeleteMeetup);
 

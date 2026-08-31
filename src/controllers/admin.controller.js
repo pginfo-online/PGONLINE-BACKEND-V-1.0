@@ -73,7 +73,7 @@ const getAllPGs = asyncHandler(async (req, res) => {
   if (cleanSearch) {
     const searchTerms = cleanSearch.split(' ').filter(Boolean);
     const escapedTerms = searchTerms.map((term) => term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-    
+
     // Find matching owner IDs to allow searching by owner name / email / phone
     const User = require('../models/User.model');
     const matchingOwners = await User.find({
@@ -135,7 +135,7 @@ const approvePG = asyncHandler(async (req, res) => {
   ).populate('owner', 'name email');
 
   if (!pg) return res.status(404).json({ success: false, message: 'PG not found' });
-  notificationTrigger.onPGApproved(pg).catch(() => {});
+  notificationTrigger.onPGApproved(pg).catch(() => { });
   successResponse(res, 'PG approved successfully', { pg });
 });
 
@@ -150,7 +150,7 @@ const rejectPG = asyncHandler(async (req, res) => {
     { new: true }
   );
   if (!pg) return res.status(404).json({ success: false, message: 'PG not found' });
-  notificationTrigger.onPGRejected(pg, reason).catch(() => {});
+  notificationTrigger.onPGRejected(pg, reason).catch(() => { });
   successResponse(res, 'PG rejected', { pg });
 });
 
@@ -278,8 +278,13 @@ const createOwner = asyncHandler(async (req, res) => {
  * @route PUT /api/v1/admin/users/:id
  */
 const updateUser = asyncHandler(async (req, res) => {
-  const { name, phone, role } = req.body;
+  const { name, phone, role, roles } = req.body;
   const User = require('../models/User.model');
+
+  const VALID_ROLES = [
+    'admin', 'owner', 'tenant', 'staff', 'property_manager',
+    'hotel_owner', 'pg_owner', 'meetup_organizer', 'hot_deals_partner',
+  ];
 
   const user = await User.findById(req.params.id);
   if (!user) {
@@ -296,15 +301,112 @@ const updateUser = asyncHandler(async (req, res) => {
     }
     user.phone = phone || undefined;
   }
-  if (role !== undefined) {
-    if (!['admin', 'owner', 'tenant', 'staff', 'property_manager'].includes(role)) {
+
+  // Support setting a full roles array
+  if (roles !== undefined) {
+    if (!Array.isArray(roles)) {
+      return res.status(400).json({ success: false, message: 'roles must be an array' });
+    }
+    const invalidRoles = roles.filter((r) => !VALID_ROLES.includes(r));
+    if (invalidRoles.length > 0) {
+      return res.status(400).json({ success: false, message: `Invalid role(s): ${invalidRoles.join(', ')}` });
+    }
+    user.roles = roles.length > 0 ? roles : ['tenant'];
+  } else if (role !== undefined) {
+    // Legacy: single role update
+    if (!VALID_ROLES.includes(role)) {
       return res.status(400).json({ success: false, message: 'Invalid role' });
     }
+    // Add to roles if not already present
+    if (!user.roles) user.roles = [user.role || 'tenant'];
+    if (!user.roles.includes(role)) user.roles.push(role);
     user.role = role;
   }
 
   await user.save();
   successResponse(res, 'User updated successfully', { user: user.toSafeObject() });
+});
+
+/**
+ * @route POST /api/v1/admin/users/:id/roles/:role
+ * @desc  Add a specific role to a user
+ */
+const addUserRole = asyncHandler(async (req, res) => {
+  const VALID_ROLES = [
+    'admin', 'owner', 'tenant', 'staff', 'property_manager',
+    'hotel_owner', 'pg_owner', 'meetup_organizer', 'hot_deals_partner',
+  ];
+  const { role } = req.params;
+
+  if (!VALID_ROLES.includes(role)) {
+    return res.status(400).json({ success: false, message: 'Invalid role' });
+  }
+
+  const user = await User.findById(req.params.id);
+  if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+  if (user.roles && user.roles[0] === 'admin' && role !== 'admin') {
+    // Admin users keep admin as primary but can have other roles
+  }
+
+  if (!user.roles) user.roles = [user.role || 'tenant'];
+  if (!user.roles.includes(role)) {
+    user.roles.push(role);
+  }
+
+  await user.save();
+  successResponse(res, `Role '${role}' added successfully`, { user: user.toSafeObject() });
+});
+
+/**
+ * @route DELETE /api/v1/admin/users/:id/roles/:role
+ * @desc  Remove a specific role from a user
+ */
+const removeUserRole = asyncHandler(async (req, res) => {
+  const { role } = req.params;
+  const user = await User.findById(req.params.id);
+  if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+
+  if (role === 'admin' && user.role === 'admin') {
+    return res.status(403).json({ success: false, message: 'Cannot remove admin role from admin user' });
+  }
+
+  if (!user.roles) user.roles = [user.role || 'tenant'];
+  user.roles = user.roles.filter((r) => r !== role);
+  if (user.roles.length === 0) user.roles = ['tenant'];
+
+  await user.save();
+  successResponse(res, `Role '${role}' removed successfully`, { user: user.toSafeObject() });
+});
+
+/**
+ * @route PUT /api/v1/admin/users/:id/roles
+ * @desc  Set the complete roles array for a user
+ */
+const setUserRoles = asyncHandler(async (req, res) => {
+  const VALID_ROLES = [
+    'admin', 'owner', 'tenant', 'staff', 'property_manager',
+    'hotel_owner', 'pg_owner', 'meetup_organizer', 'hot_deals_partner',
+  ];
+
+  const { roles } = req.body;
+  if (!Array.isArray(roles) || roles.length === 0) {
+    return res.status(400).json({ success: false, message: 'roles must be a non-empty array' });
+  }
+
+  const invalidRoles = roles.filter((r) => !VALID_ROLES.includes(r));
+  if (invalidRoles.length > 0) {
+    return res.status(400).json({ success: false, message: `Invalid role(s): ${invalidRoles.join(', ')}` });
+  }
+
+  const user = await User.findById(req.params.id);
+  if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+  if (user.role === 'admin' && !roles.includes('admin')) {
+    return res.status(403).json({ success: false, message: 'Cannot remove admin role from admin user via this endpoint' });
+  }
+
+  user.roles = roles;
+  await user.save();
+  successResponse(res, 'User roles updated successfully', { user: user.toSafeObject() });
 });
 
 /**
@@ -374,4 +476,4 @@ const updatePGByAdmin = asyncHandler(async (req, res) => {
   successResponse(res, 'PG listing updated successfully by Admin', { pg: updatedPG });
 });
 
-module.exports = { getAllPGs, approvePG, rejectPG, toggleVerify, removePG, getAllUsers, suspendUser, deleteUser, getAnalytics, createOwner, updateUser, resetPassword, updatePGByAdmin };
+module.exports = { getAllPGs, approvePG, rejectPG, toggleVerify, removePG, getAllUsers, suspendUser, deleteUser, getAnalytics, createOwner, updateUser, resetPassword, updatePGByAdmin, addUserRole, removeUserRole, setUserRoles };

@@ -3,7 +3,10 @@ const { successResponse, errorResponse, paginatedResponse } = require('../../uti
 const RentRecord  = require('../../models/RentRecord.model');
 const Tenant      = require('../../models/Tenant.model');
 const PG          = require('../../models/PG.model');
+const User        = require('../../models/User.model');
+const Payment     = require('../../models/Payment.model');
 const rentService = require('../../services/manage/rent.service');
+const receiptService = require('../../services/manage/receipt.service');
 const notificationTrigger = require('../../services/notification/notification.trigger');
 
 // ─── Generate Monthly Rent ────────────────────────────────────────────────────
@@ -84,6 +87,50 @@ exports.markRentPaid = asyncHandler(async (req, res) => {
   if (!amount || amount <= 0) return errorResponse(res, 'Valid payment amount is required', 400);
 
   const updated = await rentService.recordPayment(record._id, amount, { method, reference, notes });
+
+  // Async receipt generation & tenant notification
+  (async () => {
+    try {
+      const [tenant, pg, owner] = await Promise.all([
+        Tenant.findById(record.tenant),
+        PG.findById(record.pg),
+        User.findById(record.owner),
+      ]);
+
+      const receiptResult = await receiptService.generateAndStoreReceipt({
+        tenantName:    tenant?.name || 'Tenant',
+        tenantPhone:   tenant?.phone || '',
+        pgName:        pg?.name || '',
+        pgAddress:     pg?.address || '',
+        ownerName:     owner?.name || '',
+        billingMonth:  record.billingMonth,
+        billingYear:   record.billingYear,
+        rentAmount:    record.rentAmount,
+        paidAmount:    amount,
+        paymentMethod: method || 'cash',
+        reference:     reference || '',
+      });
+
+      if (receiptResult?.receiptUrl) {
+        record.invoiceUrl = receiptResult.receiptUrl;
+        record.invoiceNumber = receiptResult.receiptNumber;
+        await record.save();
+
+        if (tenant?.user) {
+          notificationTrigger.onReceiptGenerated({
+            _id: record._id,
+            receiptUrl: receiptResult.receiptUrl,
+            amount,
+            tenant: tenant._id,
+            user: tenant.user,
+          }).catch(() => {});
+        }
+      }
+    } catch (e) {
+      console.error('[MarkPaid] Receipt generation error:', e.message);
+    }
+  })();
+
   return successResponse(res, 'Payment recorded', updated);
 });
 
@@ -119,3 +166,52 @@ exports.getMyRentRecords = asyncHandler(async (req, res) => {
 
   return successResponse(res, 'Your rent records fetched', { records, summary });
 });
+
+// ─── Get Receipt PDF URL for a Rent Record ─────────────────────────────────────
+exports.getReceipt = asyncHandler(async (req, res) => {
+  const record = await RentRecord.findById(req.params.id)
+    .populate('tenant')
+    .populate('pg');
+
+  if (!record) return errorResponse(res, 'Rent record not found', 404);
+
+  // Check authorization: must be owner of PG or linked tenant
+  const isOwner = record.owner.toString() === req.user._id.toString();
+  const isTenant = record.tenant?.user && record.tenant.user.toString() === req.user._id.toString();
+
+  if (!isOwner && !isTenant) {
+    return errorResponse(res, 'Not authorized to access this receipt', 403);
+  }
+
+  if (record.invoiceUrl) {
+    return successResponse(res, 'Receipt URL fetched', { receiptUrl: record.invoiceUrl, invoiceNumber: record.invoiceNumber });
+  }
+
+  // Generate on-demand if paid but receiptUrl missing
+  if (record.status === 'paid' || record.paidAmount > 0) {
+    const owner = await User.findById(record.owner);
+    const receiptResult = await receiptService.generateAndStoreReceipt({
+      tenantName:    record.tenant?.name || 'Tenant',
+      tenantPhone:   record.tenant?.phone || '',
+      pgName:        record.pg?.name || '',
+      pgAddress:     record.pg?.address || '',
+      ownerName:     owner?.name || '',
+      billingMonth:  record.billingMonth,
+      billingYear:   record.billingYear,
+      rentAmount:    record.rentAmount,
+      paidAmount:    record.paidAmount,
+      paymentMethod: 'cash',
+      reference:     record._id.toString(),
+    });
+
+    if (receiptResult?.receiptUrl) {
+      record.invoiceUrl = receiptResult.receiptUrl;
+      record.invoiceNumber = receiptResult.receiptNumber;
+      await record.save();
+      return successResponse(res, 'Receipt generated', { receiptUrl: receiptResult.receiptUrl, invoiceNumber: receiptResult.receiptNumber });
+    }
+  }
+
+  return errorResponse(res, 'Receipt is not available yet', 404);
+});
+

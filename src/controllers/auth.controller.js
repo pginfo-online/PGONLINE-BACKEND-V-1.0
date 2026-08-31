@@ -39,7 +39,8 @@ const login = asyncHandler(async (req, res) => {
  * @access Private
  */
 const getMe = asyncHandler(async (req, res) => {
-  successResponse(res, 'User profile retrieved', { user: req.user });
+  const safeUser = req.user && typeof req.user.toSafeObject === 'function' ? req.user.toSafeObject() : req.user;
+  successResponse(res, 'User profile retrieved', { user: safeUser });
 });
 
 /**

@@ -75,6 +75,20 @@ const notificationSchema = new mongoose.Schema(
         'PROMO_NEW_PG', 'PROMO_FEATURED_PG', 'PROMO_SPECIAL_OFFER', 'PLATFORM_ANNOUNCEMENT',
         // System
         'ACCOUNT_WELCOME', 'ROLE_UPGRADED', 'ADMIN_CUSTOM', 'GENERAL_ALERT',
+        // ── Buffet Module ──────────────────────────────────────────────────────
+        'BUFFET_LIVE',                  // new buffet live near user's city/area
+        'BUFFET_SPECIAL',               // special/festival buffet announced
+        'BUFFET_PRICE_DROP',            // price reduced on a buffet
+        'BUFFET_STARTING_SOON',         // 1h before startTime (reserved users only)
+        'BUFFET_LAST_SEATS',            // capacity < 10% remaining
+        'BUFFET_WEEKLY_DIGEST',         // weekly area buffet digest
+        'BUFFET_RESERVATION_CONFIRMED', // user reserved a buffet slot
+        'BUFFET_RESERVATION_CANCELLED', // reservation cancelled (by user/hotel/admin)
+        'BUFFET_APPROVED',              // buffet approved → notify hotel owner
+        'BUFFET_REJECTED',              // buffet rejected → notify hotel owner
+        'HOTEL_REGISTRATION_APPROVED',  // hotel registration approved → notify user
+        'HOTEL_REGISTRATION_REJECTED',  // hotel registration rejected → notify user
+        'HOTEL_VERIFIED',               // hotel verified badge awarded
       ],
       required: [true, 'Notification type is required'],
     },

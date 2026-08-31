@@ -31,6 +31,14 @@ const protect = asyncHandler(async (req, res, next) => {
       return errorResponse(res, 'Account has been suspended', 403);
     }
 
+    // Ensure roles array and role string are fully normalized and auto-healed
+    if (typeof user.toSafeObject === 'function') {
+      const safe = user.toSafeObject();
+      user.roles = safe.roles;
+      user.role = safe.role;
+      user.isHotelOwner = safe.isHotelOwner;
+    }
+
     req.user = user;
     next();
   } catch (error) {
@@ -39,8 +47,8 @@ const protect = asyncHandler(async (req, res, next) => {
 });
 
 /**
- * Role-based access control middleware factory
- * @param {...string} roles - Allowed roles
+ * Role-based access control middleware factory (multi-role aware)
+ * @param {...string} roles - Allowed roles (any match grants access)
  */
 const authorize = (...roles) => {
   return asyncHandler(async (req, res, next) => {
@@ -48,19 +56,15 @@ const authorize = (...roles) => {
       return errorResponse(res, 'Not authenticated', 401);
     }
 
-    if (roles.includes('owner') && req.user.role !== 'owner' && req.user.role !== 'admin') {
-      const PG = require('../models/PG.model');
-      const hasPG = await PG.exists({ owner: req.user._id });
-      if (hasPG) {
-        req.user.role = 'owner';
-        await User.findByIdAndUpdate(req.user._id, { role: 'owner' });
-      }
-    }
+    const userRoles = req.user.roles || [req.user.role];
 
-    if (!roles.includes(req.user.role)) {
+    // Check if user has ANY of the required roles
+    const hasAccess = roles.some((r) => userRoles.includes(r));
+
+    if (!hasAccess) {
       return errorResponse(
         res,
-        `Role '${req.user.role}' is not authorized for this action`,
+        `Access denied. Required role(s): ${roles.join(', ')}`,
         403
       );
     }
@@ -69,7 +73,7 @@ const authorize = (...roles) => {
 };
 
 /**
- * Optional auth — attaches user if token present, but doesn't require it
+ * Optional auth -- attaches user if token present, but doesn't require it
  */
 const optionalAuth = asyncHandler(async (req, res, next) => {
   let token;
@@ -80,7 +84,16 @@ const optionalAuth = asyncHandler(async (req, res, next) => {
   if (token) {
     try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      req.user = await User.findById(decoded.id).select('-password');
+      const user = await User.findById(decoded.id).select('-password');
+      if (user) {
+        if (!user.roles || user.roles.length === 0) {
+          user.roles = [user.role || 'tenant'];
+        }
+        if (user.isHotelOwner && !user.roles.includes('hotel_owner')) {
+          user.roles.push('hotel_owner');
+        }
+        req.user = user;
+      }
     } catch (_) {
       // silently ignore invalid tokens for optional auth
     }
@@ -88,4 +101,31 @@ const optionalAuth = asyncHandler(async (req, res, next) => {
   next();
 });
 
-module.exports = { protect, authorize, optionalAuth };
+/**
+ * Hotel Owner Guard -- requires hotel_owner role OR admin.
+ * Multi-role aware: checks the roles array, not just the single role field.
+ */
+const requireHotelOwner = asyncHandler(async (req, res, next) => {
+  if (!req.user) {
+    return errorResponse(res, 'Not authenticated', 401);
+  }
+
+  const userRoles = req.user.roles || [req.user.role];
+  const isAdmin = userRoles.includes('admin');
+  const isHotelOwner = userRoles.includes('hotel_owner') || req.user.isHotelOwner === true;
+
+  if (isAdmin || isHotelOwner) {
+    return next();
+  }
+  return errorResponse(res, 'Hotel owner access required. Please register as a hotel partner first.', 403);
+});
+
+/**
+ * Utility: check if a user document has a specific role
+ */
+const userHasRole = (user, role) => {
+  const roles = user?.roles || [user?.role];
+  return roles.includes(role);
+};
+
+module.exports = { protect, authorize, optionalAuth, requireHotelOwner, userHasRole };

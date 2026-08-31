@@ -12,6 +12,8 @@ const errorMiddleware = require('./src/middlewares/error.middleware');
 const { logger } = require('./src/utils/logger');
 const { startScheduler } = require('./src/services/notification/notification.scheduler');
 const { startExportScheduler } = require('./src/services/export.scheduler');
+const { startBuffetSchedulers } = require('./src/services/buffet/buffet.scheduler');
+const { startHotDealScheduler } = require('./src/services/hotDeal.scheduler');
 
 const app = express();
 const PORT = process.env.PORT || 5001;
@@ -35,6 +37,8 @@ connectDB().then(() => {
   // Start schedulers after DB is ready
   startScheduler();
   startExportScheduler();
+  startBuffetSchedulers();
+  startHotDealScheduler();
 });
 
 // ─── Security Middleware ──────────────────────────────────────────────────────

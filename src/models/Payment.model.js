@@ -97,6 +97,10 @@ const paymentSchema = new mongoose.Schema(
       default: null,
       select: false, // not sent in normal queries
     },
+    // ─── Receipt ────────────────────────────────────────────────
+    receiptUrl:      { type: String, default: null }, // Cloudinary PDF URL
+    receiptPublicId: { type: String, default: null }, // Cloudinary public_id
+    receiptNumber:   { type: String, default: null }, // e.g. RCP-2026-000001
     notes: {
       type: String,
       trim: true,

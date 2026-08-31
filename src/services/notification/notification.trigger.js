@@ -609,6 +609,61 @@ const onRoleUpgraded = safeTrigger('onRoleUpgraded', async (user, newRole) => {
   });
 });
 
+/**
+ * Notify all active tenants when a new meal menu is published for their PG.
+ */
+const onMealMenuPublished = safeTrigger('onMealMenuPublished', async (mealDoc, pg) => {
+  if (!mealDoc?.pg) return;
+
+  // Find all active tenants for this PG
+  const tenants = await Tenant.find({
+    pg: mealDoc.pg,
+    status: { $in: ['active', 'notice'] },
+    user: { $ne: null },
+  }).select('user');
+
+  const userIds = tenants.map(t => t.user).filter(Boolean);
+  if (userIds.length === 0) return;
+
+  const formattedDate = new Date(mealDoc.menuDate).toLocaleDateString('en-IN', {
+    weekday: 'short', month: 'short', day: 'numeric',
+  });
+
+  await createAndSend({
+    type:  NOTIFICATION_TYPES.MEAL_MENU_PUBLISHED || 'GENERAL_ALERT',
+    title: '🍽️ Today\'s Menu Updated',
+    body:  `New meal menu published for ${pg?.name || 'your PG'} (${formattedDate}). Check out what's serving!`,
+    data: {
+      deepLink:   'pginfo://tenant-meals',
+      entityType: 'Meal',
+      entityId:   mealDoc._id.toString(),
+    },
+    audience:       { type: 'specific', targetUserIds: userIds },
+    isTransactional: false,
+  });
+});
+
+/**
+ * Notify tenant when payment receipt is generated.
+ */
+const onReceiptGenerated = safeTrigger('onReceiptGenerated', async (data) => {
+  const { receiptUrl, amount, user } = data;
+  if (!user) return;
+
+  await createAndSend({
+    type:  NOTIFICATION_TYPES.PAYMENT_RECEIPT || 'PAYMENT_SUCCESS',
+    title: '🧾 Payment Receipt Available',
+    body:  `Your payment receipt of ₹${Number(amount || 0).toLocaleString('en-IN')} is ready to view and download.`,
+    data: {
+      deepLink:   receiptUrl || 'pginfo://tenant-home',
+      entityType: 'Payment',
+      receiptUrl: receiptUrl || '',
+    },
+    audience:       { type: 'specific', targetUserIds: [user._id || user] },
+    isTransactional: true,
+  });
+});
+
 module.exports = {
   onPGApproved,
   onPGRejected,
@@ -629,4 +684,7 @@ module.exports = {
   onMeetupCreated,
   onWelcome,
   onRoleUpgraded,
+  onMealMenuPublished,
+  onReceiptGenerated,
 };
+

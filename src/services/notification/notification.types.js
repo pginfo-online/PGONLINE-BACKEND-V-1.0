@@ -59,6 +59,9 @@ const NOTIFICATION_TYPES = {
   MEETUP_CREATED:        'MEETUP_CREATED',
   MEETUP_REMINDER:       'MEETUP_REMINDER',
 
+  // Meals
+  MEAL_MENU_PUBLISHED:   'MEAL_MENU_PUBLISHED',
+
   // Promotional
   PROMO_NEW_PG:           'PROMO_NEW_PG',
   PROMO_FEATURED_PG:      'PROMO_FEATURED_PG',
@@ -70,6 +73,21 @@ const NOTIFICATION_TYPES = {
   ROLE_UPGRADED:   'ROLE_UPGRADED',
   ADMIN_CUSTOM:    'ADMIN_CUSTOM',
   GENERAL_ALERT:   'GENERAL_ALERT',
+
+  // ── Buffet Module ────────────────────────────────────────────────────────────
+  BUFFET_LIVE:                  'BUFFET_LIVE',
+  BUFFET_SPECIAL:               'BUFFET_SPECIAL',
+  BUFFET_PRICE_DROP:            'BUFFET_PRICE_DROP',
+  BUFFET_STARTING_SOON:         'BUFFET_STARTING_SOON',
+  BUFFET_LAST_SEATS:            'BUFFET_LAST_SEATS',
+  BUFFET_WEEKLY_DIGEST:         'BUFFET_WEEKLY_DIGEST',
+  BUFFET_RESERVATION_CONFIRMED: 'BUFFET_RESERVATION_CONFIRMED',
+  BUFFET_RESERVATION_CANCELLED: 'BUFFET_RESERVATION_CANCELLED',
+  BUFFET_APPROVED:              'BUFFET_APPROVED',
+  BUFFET_REJECTED:              'BUFFET_REJECTED',
+  HOTEL_REGISTRATION_APPROVED:  'HOTEL_REGISTRATION_APPROVED',
+  HOTEL_REGISTRATION_REJECTED:  'HOTEL_REGISTRATION_REJECTED',
+  HOTEL_VERIFIED:               'HOTEL_VERIFIED',
 };
 
 // ─── Category Keys (match NotificationPreference.categories fields) ────────────
@@ -85,21 +103,27 @@ const CATEGORIES = {
   PROMOTIONS:      'promotions',
   ANNOUNCEMENTS:   'announcements',
   GENERAL_ALERTS:  'general_alerts',
+  // Buffet categories
+  BUFFET_UPDATES:  'buffet_updates',
+  BUFFET_RESERVATIONS: 'buffet_reservations',
 };
 
 // ─── Category Labels (for mobile preferences UI) ───────────────────────────────
 const CATEGORY_LABELS = {
-  pg_updates:      { label: 'PG Updates', description: 'PG approval, rejection, listing status' },
-  booking_updates: { label: 'Bookings & Visits', description: 'Visit confirmations, reminders, cancellations' },
-  payment_updates: { label: 'Payments', description: 'Payment confirmations and receipts' },
-  rent_reminders:  { label: 'Rent Reminders', description: 'Upcoming rent due and overdue alerts' },
-  complaints:      { label: 'Complaints', description: 'Complaint status updates' },
-  maintenance:     { label: 'Maintenance', description: 'Maintenance requests and updates' },
-  tasks:           { label: 'Tasks', description: 'Task assignments and reminders' },
-  jobs:            { label: 'Jobs', description: 'New job postings and application updates' },
-  promotions:      { label: 'Promotions', description: 'New PGs, offers, and featured listings' },
-  announcements:   { label: 'Announcements', description: 'Platform-wide news and updates' },
-  general_alerts:  { label: 'General Alerts', description: 'Other important notifications' },
+  pg_updates:          { label: 'PG Updates', description: 'PG approval, rejection, listing status' },
+  booking_updates:     { label: 'Bookings & Visits', description: 'Visit confirmations, reminders, cancellations' },
+  payment_updates:     { label: 'Payments', description: 'Payment confirmations and receipts' },
+  rent_reminders:      { label: 'Rent Reminders', description: 'Upcoming rent due and overdue alerts' },
+  complaints:          { label: 'Complaints', description: 'Complaint status updates' },
+  maintenance:         { label: 'Maintenance', description: 'Maintenance requests and updates' },
+  tasks:               { label: 'Tasks', description: 'Task assignments and reminders' },
+  jobs:                { label: 'Jobs', description: 'New job postings and application updates' },
+  promotions:          { label: 'Promotions', description: 'New PGs, offers, and featured listings' },
+  announcements:       { label: 'Announcements', description: 'Platform-wide news and updates' },
+  general_alerts:      { label: 'General Alerts', description: 'Other important notifications' },
+  // Buffet categories
+  buffet_updates:      { label: 'Buffet Updates', description: 'New buffets, price drops, special offers near you' },
+  buffet_reservations: { label: 'Buffet Reservations', description: 'Reservation confirmations, reminders, and cancellations' },
 };
 
 /**
@@ -662,3 +686,139 @@ module.exports = {
   getPreferenceKey,
   isTransactional,
 };
+
+// ─── Buffet TYPE_CONFIG entries (merged into TYPE_CONFIG above) ───────────────
+// These are added via Object.assign after TYPE_CONFIG is defined in the file
+// to keep the file structure clean. They are appended here and merged:
+Object.assign(TYPE_CONFIG, {
+  BUFFET_LIVE: {
+    category: 'buffet_updates',
+    preferenceKey: 'buffet_updates',
+    transactional: false,
+    title: '🍽️ New Buffet Near You!',
+    body: '{{hotelName}} has a new {{buffetType}} buffet · ₹{{price}}/person · {{startTime}}–{{endTime}}',
+    deepLinkPattern: 'pginfo://buffet/{{entityId}}',
+    entityType: 'buffet',
+    icon: 'restaurant',
+  },
+  BUFFET_SPECIAL: {
+    category: 'buffet_updates',
+    preferenceKey: 'buffet_updates',
+    transactional: false,
+    title: '🎉 Special Buffet Alert!',
+    body: '{{hotelName}} is hosting a special buffet · ₹{{price}}/person',
+    deepLinkPattern: 'pginfo://buffet/{{entityId}}',
+    entityType: 'buffet',
+    icon: 'sparkles',
+  },
+  BUFFET_PRICE_DROP: {
+    category: 'buffet_updates',
+    preferenceKey: 'buffet_updates',
+    transactional: false,
+    title: '💸 Price Drop on Buffet!',
+    body: '{{buffetName}} at {{hotelName}} is now ₹{{newPrice}}/person (was ₹{{oldPrice}})',
+    deepLinkPattern: 'pginfo://buffet/{{entityId}}',
+    entityType: 'buffet',
+    icon: 'trending-down',
+  },
+  BUFFET_STARTING_SOON: {
+    category: 'buffet_reservations',
+    preferenceKey: 'buffet_reservations',
+    transactional: true,
+    title: '⏰ Buffet Starting Soon!',
+    body: '{{buffetName}} at {{hotelName}} starts in 1 hour. Head over now!',
+    deepLinkPattern: 'pginfo://buffet/{{entityId}}',
+    entityType: 'buffet',
+    icon: 'time',
+  },
+  BUFFET_LAST_SEATS: {
+    category: 'buffet_updates',
+    preferenceKey: 'buffet_updates',
+    transactional: false,
+    title: '🔥 Last Few Seats!',
+    body: '{{buffetName}} at {{hotelName}} is almost full · Reserve now!',
+    deepLinkPattern: 'pginfo://buffet/{{entityId}}',
+    entityType: 'buffet',
+    icon: 'alert-circle',
+  },
+  BUFFET_WEEKLY_DIGEST: {
+    category: 'buffet_updates',
+    preferenceKey: 'buffet_updates',
+    transactional: false,
+    title: '🍽️ This Week\'s Buffets Near You',
+    body: '{{count}} buffets available in {{area}} this week. Explore now!',
+    deepLinkPattern: 'pginfo://buffet/discover',
+    entityType: 'buffet',
+    icon: 'calendar',
+  },
+  BUFFET_RESERVATION_CONFIRMED: {
+    category: 'buffet_reservations',
+    preferenceKey: 'buffet_reservations',
+    transactional: true,
+    title: '✅ Reservation Confirmed!',
+    body: 'Your reservation at {{hotelName}} for {{buffetName}} on {{date}} is confirmed.',
+    deepLinkPattern: 'pginfo://buffet/reservations/{{entityId}}',
+    entityType: 'reservation',
+    icon: 'checkmark-circle',
+  },
+  BUFFET_RESERVATION_CANCELLED: {
+    category: 'buffet_reservations',
+    preferenceKey: 'buffet_reservations',
+    transactional: true,
+    title: '❌ Reservation Cancelled',
+    body: 'Your reservation at {{hotelName}} for {{buffetName}} has been cancelled.',
+    deepLinkPattern: 'pginfo://buffet/reservations/{{entityId}}',
+    entityType: 'reservation',
+    icon: 'close-circle',
+  },
+  BUFFET_APPROVED: {
+    category: 'general_alerts',
+    preferenceKey: 'general_alerts',
+    transactional: true,
+    title: '✅ Buffet Approved!',
+    body: 'Your buffet "{{buffetName}}" has been approved and will go live on {{date}}.',
+    deepLinkPattern: 'pginfo://hotel/buffets/{{entityId}}',
+    entityType: 'buffet',
+    icon: 'checkmark-circle',
+  },
+  BUFFET_REJECTED: {
+    category: 'general_alerts',
+    preferenceKey: 'general_alerts',
+    transactional: true,
+    title: '❌ Buffet Rejected',
+    body: 'Your buffet "{{buffetName}}" was not approved. Reason: {{reason}}',
+    deepLinkPattern: 'pginfo://hotel/buffets/{{entityId}}',
+    entityType: 'buffet',
+    icon: 'close-circle',
+  },
+  HOTEL_REGISTRATION_APPROVED: {
+    category: 'general_alerts',
+    preferenceKey: 'general_alerts',
+    transactional: true,
+    title: '🎉 Hotel Registration Approved!',
+    body: 'Welcome! Your hotel has been approved. Check your email for login credentials.',
+    deepLinkPattern: 'pginfo://hotel/dashboard',
+    entityType: 'hotel',
+    icon: 'business',
+  },
+  HOTEL_REGISTRATION_REJECTED: {
+    category: 'general_alerts',
+    preferenceKey: 'general_alerts',
+    transactional: true,
+    title: '❌ Hotel Registration Not Approved',
+    body: 'Your hotel registration was not approved at this time. Reason: {{reason}}',
+    deepLinkPattern: 'pginfo://profile',
+    entityType: 'hotel',
+    icon: 'close-circle',
+  },
+  HOTEL_VERIFIED: {
+    category: 'general_alerts',
+    preferenceKey: 'general_alerts',
+    transactional: true,
+    title: '🟢 Hotel Verified!',
+    body: '{{hotelName}} has been awarded a Verified Hotel badge.',
+    deepLinkPattern: 'pginfo://hotel/dashboard',
+    entityType: 'hotel',
+    icon: 'shield-checkmark',
+  },
+});

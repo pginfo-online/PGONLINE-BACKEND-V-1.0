@@ -51,9 +51,8 @@ const citySchema = new mongoose.Schema(
 );
 
 // ─── Indexes ──────────────────────────────────────────────────────────────────
+// Composite + secondary performance indexes only — unique is already set inline above
 citySchema.index({ isActive: 1, order: 1 });
-citySchema.index({ name: 1 }, { unique: true });
-citySchema.index({ slug: 1 }, { unique: true, sparse: true });
 
 // ─── Auto-generate slug from name before save ─────────────────────────────────
 citySchema.pre('save', function (next) {

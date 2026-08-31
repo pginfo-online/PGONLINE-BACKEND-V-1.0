@@ -15,6 +15,7 @@ const agreementController = require('../../controllers/manage/agreement.controll
 const expenseController   = require('../../controllers/manage/expense.controller');
 const dashboardController = require('../../controllers/manage/dashboard.controller');
 const hiringController    = require('../../controllers/manage/hiring.controller');
+const mealController      = require('../../controllers/manage/meal.controller');
 
 // ─── Public / Open Hiring Routes ──────────────────────────────────────────────
 router.get('/jobs/public', hiringController.getPublicJobs);
@@ -33,6 +34,8 @@ router.use(protect);
 // ─── Tenant Self Services (Mobile Tenant Mode) ────────────────────────────────
 router.get('/my-tenancy', tenantController.getMyTenancy);
 router.get('/my-rent-records', rentController.getMyRentRecords);
+router.get('/my-pg-meals', mealController.getMyPGMeals);
+router.get('/rent/:id/receipt', rentController.getReceipt);
 
 // ─── Owner / Property Manager Routes ──────────────────────────────────────────
 const ownerOrAdmin = authorize('owner', 'admin', 'property_manager');
@@ -88,6 +91,14 @@ router.get('/pgs/:pgId/rent', ownerOrAdmin, rentController.getRentRecords);
 router.get('/tenants/:tenantId/rent', ownerOrAdmin, rentController.getTenantRentRecords);
 router.post('/rent/:id/mark-paid', ownerOrAdmin, validate(validators.markRentPaidSchema), rentController.markRentPaid);
 
+// Meals Management APIs (Owner)
+router.post('/pgs/:pgId/meals', ownerOrAdmin, mealController.createMealMenu);
+router.get('/pgs/:pgId/meals', ownerOrAdmin, mealController.getMealMenus);
+router.get('/meals/:id', ownerOrAdmin, mealController.getMealMenu);
+router.put('/meals/:id', ownerOrAdmin, mealController.updateMealMenu);
+router.delete('/meals/:id', ownerOrAdmin, mealController.deleteMealMenu);
+router.post('/meals/:id/publish', ownerOrAdmin, mealController.publishMealMenu);
+
 // Razorpay Payments (Web only) & Manual Payments
 router.post('/payments/create-order', paymentController.createOrder); // both tenant & owner can trigger order
 router.post('/payments/verify', paymentController.verifyPayment);     // both tenant & owner can verify
@@ -116,3 +127,4 @@ router.get('/jobs/:jobId/applications', ownerOrAdmin, hiringController.getJobApp
 router.put('/applications/:id/status', ownerOrAdmin, hiringController.updateApplicationStatus);
 
 module.exports = router;
+
