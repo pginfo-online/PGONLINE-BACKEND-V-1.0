@@ -44,6 +44,16 @@ const areaSchema = new mongoose.Schema(
       type: Number,
       default: 99, // lower = shown first
     },
+    // Provenance tracking
+    isAutoCreated: {
+      type: Boolean,
+      default: false, // true = created by user/system, false = admin-curated
+    },
+    source: {
+      type: String,
+      enum: ['admin', 'user', 'google_maps'],
+      default: 'admin',
+    },
   },
   {
     timestamps: true,

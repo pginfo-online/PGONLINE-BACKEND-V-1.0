@@ -16,13 +16,21 @@ cloudinary.config({
  */
 const uploadToCloudinary = (buffer, folder = 'pginfo/general', resourceType = 'image') => {
   return new Promise((resolve, reject) => {
+    const uploadOptions = {
+      folder,
+      resource_type: resourceType,
+      timeout: 300000, // 5 minutes socket timeout
+    };
+
+    if (resourceType === 'video') {
+      uploadOptions.chunk_size = 6000000; // 6MB streaming chunks for video
+    } else {
+      uploadOptions.quality = 'auto';
+      uploadOptions.fetch_format = 'auto';
+    }
+
     const uploadStream = cloudinary.uploader.upload_stream(
-      {
-        folder,
-        resource_type: resourceType,
-        quality: 'auto',
-        fetch_format: 'auto',
-      },
+      uploadOptions,
       (error, result) => {
         if (error) return reject(error);
         resolve(result);

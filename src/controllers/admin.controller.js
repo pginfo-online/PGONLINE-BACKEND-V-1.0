@@ -48,7 +48,7 @@ const getAllPGs = asyncHandler(async (req, res) => {
   }
 
   // Filter params
-  const { city, area, gender, propertyType, isVerified } = req.query;
+  const { city, area, gender, propertyType, isVerified, quality } = req.query;
 
   if (city && typeof city === 'string' && city.trim()) {
     query.city = new RegExp(city.trim(), 'i');
@@ -68,6 +68,18 @@ const getAllPGs = asyncHandler(async (req, res) => {
 
   if (isVerified !== undefined && isVerified !== '' && isVerified !== 'all') {
     query.isVerified = isVerified === 'true' || isVerified === true;
+  }
+
+  if (quality && quality !== 'all') {
+    if (quality === 'low') {
+      query.dataQualityScore = { $lte: 2 };
+    } else if (quality === 'good') {
+      query.dataQualityScore = 3;
+    } else if (quality === 'high') {
+      query.dataQualityScore = { $gte: 4 };
+    } else if (!isNaN(Number(quality))) {
+      query.dataQualityScore = Number(quality);
+    }
   }
 
   if (cleanSearch) {

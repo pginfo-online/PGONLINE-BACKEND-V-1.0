@@ -125,8 +125,12 @@ const createPG = asyncHandler(async (req, res) => {
  * @route PUT /api/v1/pg/:id
  */
 const updatePG = asyncHandler(async (req, res) => {
-  const result = await pgService.updatePG(req.params.id, req.user._id, req.body);
-  successResponse(res, 'Changes submitted for admin approval. Your listing will update once approved.', result);
+  const result = await pgService.updatePG(req.params.id, req.user._id, req.body, req.user.role);
+  if (req.user.role === 'admin') {
+    successResponse(res, 'PG updated successfully by admin', result);
+  } else {
+    successResponse(res, 'Changes submitted for admin approval. Your listing will update once approved.', result);
+  }
 });
 
 /**

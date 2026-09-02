@@ -82,7 +82,11 @@ const getUpdateRequestById = async (id) => {
 };
 
 /**
- * Approve PG update request: applies proposed changes to the live PG
+ * Approve PG update request: applies proposed changes to the live PG.
+ *
+ * Uses findByIdAndUpdate + $set to reliably replace subdocument arrays
+ * (e.g. roomConfigs, nearbyPlaces, photos) — direct Mongoose property mutation
+ * does not mark arrays as modified and can silently fail.
  */
 const approveUpdateRequest = async (requestId, adminId) => {
   const request = await PGUpdateRequest.findById(requestId);
@@ -98,32 +102,31 @@ const approveUpdateRequest = async (requestId, adminId) => {
     throw err;
   }
 
-  const livePG = await PG.findById(request.pg);
-  if (!livePG) {
+  const pgExists = await PG.exists({ _id: request.pg });
+  if (!pgExists) {
     const err = new Error('Associated PG not found');
     err.statusCode = 404;
     throw err;
   }
 
-  // Apply proposed changes to the live PG document
-  const changes = request.proposedChanges;
-  Object.keys(changes).forEach((key) => {
-    // Avoid overriding internal or immutable fields if they snuck in
-    if (['_id', 'id', 'owner', 'createdAt', 'updatedAt', '__v'].includes(key)) return;
+  // Strip immutable / virtual fields from proposed changes before applying
+  const IMMUTABLE_FIELDS = ['_id', 'id', 'owner', 'createdAt', 'updatedAt', '__v',
+                             'rent', 'totalBeds', 'availableBeds', 'minRent', 'maxRent'];
+  const changes = { ...request.proposedChanges };
+  IMMUTABLE_FIELDS.forEach((f) => delete changes[f]);
 
-    if (key === 'rent' && changes.rent) {
-      // Merge rent objects
-      livePG.rent = {
-        ...livePG.rent,
-        ...changes.rent,
-      };
-    } else {
-      livePG[key] = changes[key];
-    }
-  });
+  // Apply via $set — this correctly handles arrays (roomConfigs, nearbyPlaces, photos, videos)
+  const updatedPG = await PG.findByIdAndUpdate(
+    request.pg,
+    { $set: changes },
+    { new: true, runValidators: true }
+  );
 
-  // Save the updated live PG listing
-  await livePG.save();
+  if (!updatedPG) {
+    const err = new Error('Failed to apply changes to PG');
+    err.statusCode = 500;
+    throw err;
+  }
 
   // Update the request status
   request.status = 'approved';
@@ -137,7 +140,6 @@ const approveUpdateRequest = async (requestId, adminId) => {
   });
 
   await request.save();
-
   return request;
 };
 
