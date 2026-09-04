@@ -18,9 +18,19 @@ const {
   registerCompleteSchema
 } = require('../../validators/auth.validator');
 
+const rateLimit = require('express-rate-limit');
+
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: { success: false, message: 'Too many login attempts. Please try again after 15 minutes.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 // ─── Standard Auth Routes (unchanged) ────────────────────────────────────────
 router.post('/register', validate(registerSchema), register);
-router.post('/login', validate(loginSchema), login);
+router.post('/login', loginLimiter, validate(loginSchema), login);
 router.get('/me', protect, getMe);
 router.put('/me', protect, validate(updateProfileSchema), updateMe);
 

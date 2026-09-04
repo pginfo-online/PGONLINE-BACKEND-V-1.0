@@ -40,7 +40,7 @@ const getAreasByCity = asyncHandler(async (req, res) => {
   const { cityId } = req.params;
   const areas = await Area.find({ city: cityId, isActive: true })
     .sort({ order: 1, name: 1 })
-    .select('name slug order')
+    .select('name slug order image')
     .lean();
 
   return successResponse(res, 'Areas retrieved', { areas });
@@ -48,7 +48,7 @@ const getAreasByCity = asyncHandler(async (req, res) => {
 
 // ─── POST /api/v1/buffet/admin/areas ──────────────────────────────────────────
 const createArea = asyncHandler(async (req, res) => {
-  const { city, name, description, isActive, order } = req.body;
+  const { city, name, description, isActive, order, image } = req.body;
 
   // Validate city exists
   const cityDoc = await City.findById(city).lean();
@@ -66,6 +66,7 @@ const createArea = asyncHandler(async (req, res) => {
     cityName: cityDoc.name,
     name: name.trim(),
     description,
+    image: image && image.url ? { url: image.url, publicId: image.publicId || '' } : { url: null, publicId: null },
     isActive: isActive !== false,
     order: order ?? 99,
   });
@@ -78,7 +79,7 @@ const updateArea = asyncHandler(async (req, res) => {
   const area = await Area.findById(req.params.id);
   if (!area) return errorResponse(res, 'Area not found', 404);
 
-  const { name, description, isActive, order } = req.body;
+  const { name, description, isActive, order, image } = req.body;
 
   // Check duplicate if name changed
   if (name && name.trim() !== area.name) {
@@ -94,6 +95,9 @@ const updateArea = asyncHandler(async (req, res) => {
   if (description !== undefined) area.description = description;
   if (isActive !== undefined) area.isActive = isActive;
   if (order !== undefined) area.order = order;
+  if (image !== undefined) {
+    area.image = image && image.url ? { url: image.url, publicId: image.publicId || '' } : { url: null, publicId: null };
+  }
 
   await area.save();
   return successResponse(res, 'Area updated successfully', { area });

@@ -5,6 +5,8 @@ const { successResponse } = require('../utils/apiResponse');
 const authService = require('../services/auth.service');
 const otpService = require('../services/otp.service');
 const jwt = require('jsonwebtoken');
+const { deriveCapabilities, deriveAvailableModes } = require('../utils/capabilities');
+const { getMembershipSummary } = require('../utils/memberships');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Standard password-based auth
@@ -26,7 +28,7 @@ const register = asyncHandler(async (req, res) => {
  */
 const login = asyncHandler(async (req, res) => {
   const { email, password } = req.body;
-  const result = await authService.loginUser({ email, password });
+  const result = await authService.loginUserEmailPassword({ email, password });
   successResponse(res, 'Login successful', result);
 });
 
@@ -37,10 +39,38 @@ const login = asyncHandler(async (req, res) => {
 /**
  * @route  GET /api/v1/auth/me
  * @access Private
+ * @desc   Returns the authenticated user's full auth context:
+ *         - user: safe user object (no password)
+ *         - capabilities: role-derived capability strings
+ *         - memberships: lightweight business ownership summary
+ *         - availableModes: experience modes available to this user
+ *
+ * This single endpoint powers the entire mobile app's UX decisions.
+ * The mobile app calls this on startup (background) and after any
+ * role change to keep the session authoritative.
  */
 const getMe = asyncHandler(async (req, res) => {
-  const safeUser = req.user && typeof req.user.toSafeObject === 'function' ? req.user.toSafeObject() : req.user;
-  successResponse(res, 'User profile retrieved', { user: safeUser });
+  const safeUser = req.user && typeof req.user.toSafeObject === 'function'
+    ? req.user.toSafeObject()
+    : req.user;
+
+  // Derive capabilities and modes from the user's current roles[] (no extra DB call)
+  const capabilities = deriveCapabilities(req.user);
+  const availableModes = deriveAvailableModes(req.user);
+
+  // Membership summary — lightweight countDocuments queries, run in parallel
+  const userRoles = Array.isArray(req.user.roles) && req.user.roles.length > 0
+    ? req.user.roles
+    : [req.user.role || 'tenant'];
+
+  const memberships = await getMembershipSummary(req.user._id, userRoles);
+
+  successResponse(res, 'User profile retrieved', {
+    user: safeUser,
+    capabilities,
+    memberships,
+    availableModes,
+  });
 });
 
 /**

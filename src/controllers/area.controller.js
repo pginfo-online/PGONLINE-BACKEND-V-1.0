@@ -43,13 +43,49 @@ const searchAreas = asyncHandler(async (req, res) => {
     filter.name = { $regex: q.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), $options: 'i' };
   }
 
+  const PG = require('../models/PG.model');
+
   const areas = await Area.find(filter)
     .sort({ order: 1, name: 1 })
-    .select('_id name slug order')
+    .select('_id name slug order image')
     .limit(20)
     .lean();
 
-  return successResponse(res, 'Areas retrieved', { areas });
+  // Aggregate approved PG counts for these areas
+  const areaNames = areas.map((a) => a.name);
+  let pgCountMap = {};
+
+  if (areaNames.length > 0) {
+    try {
+      const counts = await PG.aggregate([
+        {
+          $match: {
+            status: 'approved',
+            area: { $in: areaNames.map((n) => new RegExp(`^${n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i')) },
+          },
+        },
+        {
+          $group: {
+            _id: { $toLower: '$area' },
+            count: { $sum: 1 },
+          },
+        },
+      ]);
+
+      counts.forEach((c) => {
+        pgCountMap[c._id] = c.count;
+      });
+    } catch (err) {
+      console.warn('[AreaController] Failed to aggregate PG counts:', err.message);
+    }
+  }
+
+  const enrichedAreas = areas.map((area) => ({
+    ...area,
+    pgCount: pgCountMap[area.name.toLowerCase()] || 0,
+  }));
+
+  return successResponse(res, 'Areas retrieved', { areas: enrichedAreas });
 });
 
 // ─── POST /api/v1/areas/find-or-create ────────────────────────────────────────

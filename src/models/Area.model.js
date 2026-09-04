@@ -36,6 +36,10 @@ const areaSchema = new mongoose.Schema(
       trim: true,
       maxlength: [300, 'Description cannot exceed 300 characters'],
     },
+    image: {
+      url: { type: String, default: null },
+      publicId: { type: String, default: null },
+    },
     isActive: {
       type: Boolean,
       default: true,

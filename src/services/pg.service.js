@@ -191,7 +191,7 @@ const getPGs = async (params, user = null) => {
           roomConfigs: 1, food: 1, ac: 1, gender: 1, preferredTenants: 1,
           photos: 1, isVerified: 1, isAvailable: 1, status: 1,
           createdAt: 1, distance: 1, latitude: 1, longitude: 1, location: 1,
-          dataQualityScore: 1,
+          dataQualityScore: 1, monthlyPricing: 1, rent: 1,
           'owner._id': 1, 'owner.name': 1, 'owner.email': 1, 'owner.phone': 1,
         },
       },
@@ -210,7 +210,7 @@ const getPGs = async (params, user = null) => {
     const [findPgs, findTotal] = await Promise.all([
       PG.find(query)
         .select(
-          'name city area address roomConfigs food ac gender preferredTenants photos ' +
+          'name city area address roomConfigs food ac gender preferredTenants photos monthlyPricing rent ' +
           'isVerified isAvailable status owner createdAt latitude longitude location dataQualityScore'
         )
         .populate('owner', 'name email phone')
@@ -224,7 +224,7 @@ const getPGs = async (params, user = null) => {
     total = findTotal;
   }
 
-  // ── Public Sanitization ────────────────────────────────────────────────────
+  // ── Public Sanitization & Pricing Guarantees ───────────────────────────────
   const isGuest = !user;
   const sanitizedPgs = pgs.map((item) => {
     const pgObj = { ...item, isPublicPreview: isGuest };
@@ -232,6 +232,38 @@ const getPGs = async (params, user = null) => {
       delete pgObj.owner.email;
       delete pgObj.owner.phone;
     }
+
+    // Ensure rent, minRent, maxRent are always reliably computed
+    if (!pgObj.rent || typeof pgObj.rent !== 'object') {
+      pgObj.rent = {};
+    }
+    const rents = [];
+    if (Array.isArray(pgObj.roomConfigs) && pgObj.roomConfigs.length > 0) {
+      pgObj.roomConfigs.forEach((rc) => {
+        const r = Number(rc.rent);
+        if (!isNaN(r) && r > 0) {
+          rents.push(r);
+          if (rc.shareType) {
+            pgObj.rent[rc.shareType] = r;
+          }
+        }
+      });
+    }
+    if (rents.length > 0) {
+      pgObj.minRent = Math.min(...rents);
+      pgObj.maxRent = Math.max(...rents);
+    } else if (typeof pgObj.monthlyPricing === 'number' && pgObj.monthlyPricing > 0) {
+      pgObj.minRent = pgObj.monthlyPricing;
+      pgObj.maxRent = pgObj.monthlyPricing;
+      pgObj.rent.single = pgObj.monthlyPricing;
+    } else if (pgObj.rent && typeof pgObj.rent === 'object') {
+      const objRents = Object.values(pgObj.rent).map(Number).filter((r) => !isNaN(r) && r > 0);
+      if (objRents.length > 0) {
+        pgObj.minRent = Math.min(...objRents);
+        pgObj.maxRent = Math.max(...objRents);
+      }
+    }
+
     return pgObj;
   });
 
@@ -286,6 +318,35 @@ const getPGById = async (id, user = null) => {
     }
     if (pgObj.area && pgObj.city) {
       pgObj.address = `${pgObj.area}, ${pgObj.city} (Exact address unlocked after login)`;
+    }
+  }
+
+  // Ensure rent and minRent are reliably populated
+  if (!pgObj.rent || typeof pgObj.rent !== 'object') {
+    pgObj.rent = {};
+  }
+  const detailRents = [];
+  if (Array.isArray(pgObj.roomConfigs) && pgObj.roomConfigs.length > 0) {
+    pgObj.roomConfigs.forEach((rc) => {
+      const r = Number(rc.rent);
+      if (!isNaN(r) && r > 0) {
+        detailRents.push(r);
+        if (rc.shareType) pgObj.rent[rc.shareType] = r;
+      }
+    });
+  }
+  if (detailRents.length > 0) {
+    pgObj.minRent = Math.min(...detailRents);
+    pgObj.maxRent = Math.max(...detailRents);
+  } else if (typeof pgObj.monthlyPricing === 'number' && pgObj.monthlyPricing > 0) {
+    pgObj.minRent = pgObj.monthlyPricing;
+    pgObj.maxRent = pgObj.monthlyPricing;
+    pgObj.rent.single = pgObj.monthlyPricing;
+  } else if (pgObj.rent && typeof pgObj.rent === 'object') {
+    const objRents = Object.values(pgObj.rent).map(Number).filter((r) => !isNaN(r) && r > 0);
+    if (objRents.length > 0) {
+      pgObj.minRent = Math.min(...objRents);
+      pgObj.maxRent = Math.max(...objRents);
     }
   }
 

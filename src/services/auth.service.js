@@ -253,12 +253,57 @@ const updatePushToken = async (userId, pushToken) =>
   User.findByIdAndUpdate(userId, { pushToken }, { new: true }).select('-password');
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Web-only: Email + Password login returning enriched auth context
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Log in a user with email/phone + password (web-only path).
+ *
+ * This is used by the web frontend for admin and owner accounts.
+ * The mobile app uses OTP exclusively — this function is NOT called from mobile.
+ *
+ * Returns the same enriched context shape as GET /me so the web client
+ * can immediately hydrate its auth state without a second request.
+ *
+ * @param {{ email: string, password: string }} params
+ * @returns {{ user, token, capabilities, memberships, availableModes }}
+ */
+const loginUserEmailPassword = async ({ email, password }) => {
+  const { deriveCapabilities, deriveAvailableModes } = require('../utils/capabilities');
+  const { getMembershipSummary } = require('../utils/memberships');
+
+  // Reuse existing loginUser which handles email/phone + password
+  const result = await loginUser({ email, password });
+
+  // Re-fetch the full user to get roles[] (loginUser returns toSafeObject)
+  const freshUser = await User.findById(result.user._id || result.user.id);
+
+  const capabilities = deriveCapabilities(freshUser);
+  const availableModes = deriveAvailableModes(freshUser);
+
+  const userRoles = Array.isArray(freshUser.roles) && freshUser.roles.length > 0
+    ? freshUser.roles
+    : [freshUser.role || 'tenant'];
+
+  const memberships = await getMembershipSummary(freshUser._id, userRoles);
+
+  return {
+    user: result.user,
+    token: result.token,
+    capabilities,
+    memberships,
+    availableModes,
+  };
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Exports
 // ─────────────────────────────────────────────────────────────────────────────
 module.exports = {
   generateToken,
   registerUser,
   loginUser,
+  loginUserEmailPassword,
   updatePushToken,
   registerUserViaOtp,
   loginUserViaOtp,

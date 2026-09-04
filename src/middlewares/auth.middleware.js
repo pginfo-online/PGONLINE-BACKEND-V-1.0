@@ -2,6 +2,7 @@ const jwt = require('jsonwebtoken');
 const { errorResponse } = require('../utils/apiResponse');
 const User = require('../models/User.model');
 const asyncHandler = require('../utils/asyncHandler');
+const { hasCapability } = require('../utils/capabilities');
 
 /**
  * Verify JWT and attach user to request
@@ -128,4 +129,95 @@ const userHasRole = (user, role) => {
   return roles.includes(role);
 };
 
-module.exports = { protect, authorize, optionalAuth, requireHotelOwner, userHasRole };
+/**
+ * Capability-based access control middleware factory.
+ *
+ * More granular than role checks — checks derived capabilities which
+ * are computed from roles[] but expressed as intent-based strings.
+ *
+ * Example:
+ *   router.delete('/pgs/:id', protect, requireCapability('can_manage_pgs'), deletePG);
+ *
+ * @param {...string} caps - Required capability strings (ANY match grants access)
+ */
+const requireCapability = (...caps) =>
+  asyncHandler(async (req, res, next) => {
+    if (!req.user) {
+      return errorResponse(res, 'Not authenticated', 401);
+    }
+
+    const hasAccess = caps.some((cap) => hasCapability(req.user, cap));
+
+    if (!hasAccess) {
+      return errorResponse(
+        res,
+        `Access denied. Required capability: ${caps.join(' or ')}`,
+        403
+      );
+    }
+    next();
+  });
+
+/**
+ * Resource ownership middleware factory.
+ *
+ * Verifies the authenticated user owns a specific resource before
+ * allowing the operation. Admin users bypass this check.
+ *
+ * Example:
+ *   router.put('/pgs/:id', protect, requireOwnership('PG', 'id'), updatePG);
+ *
+ * @param {string} modelName  - The Mongoose model name (e.g. 'PG', 'Hotel')
+ * @param {string} paramName  - The route param name for the resource ID (e.g. 'id')
+ */
+const requireOwnership = (modelName, paramName = 'id') =>
+  asyncHandler(async (req, res, next) => {
+    if (!req.user) {
+      return errorResponse(res, 'Not authenticated', 401);
+    }
+
+    // Admins bypass ownership checks
+    const userRoles = req.user.roles || [req.user.role];
+    if (userRoles.includes('admin')) {
+      return next();
+    }
+
+    const resourceId = req.params[paramName];
+    if (!resourceId) {
+      return errorResponse(res, `Resource ID param '${paramName}' not found in route`, 400);
+    }
+
+    try {
+      const Model = require(`../models/${modelName}.model`);
+      const resource = await Model.findById(resourceId).select('owner').lean();
+
+      if (!resource) {
+        return errorResponse(res, `${modelName} not found`, 404);
+      }
+
+      const ownerId = resource.owner?.toString?.() || resource.owner;
+      const userId = req.user._id?.toString?.() || req.user._id;
+
+      if (ownerId !== userId) {
+        return errorResponse(
+          res,
+          `You do not have permission to modify this ${modelName}`,
+          403
+        );
+      }
+
+      next();
+    } catch (err) {
+      return errorResponse(res, `Ownership check failed: ${err.message}`, 500);
+    }
+  });
+
+module.exports = {
+  protect,
+  authorize,
+  optionalAuth,
+  requireHotelOwner,
+  userHasRole,
+  requireCapability,
+  requireOwnership,
+};
