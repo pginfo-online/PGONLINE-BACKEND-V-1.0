@@ -8,7 +8,7 @@ module.exports = {
       watch: false,
       max_memory_restart: "500M",
       wait_ready: true,
-      listen_timeout: 10000,
+      listen_timeout: 30000,
       kill_timeout: 5000,
       error_file: "./logs/err.log",
       out_file: "./logs/out.log",

@@ -222,8 +222,8 @@ const startServer = async () => {
       logger.info(`ℹ️ Schedulers skipped on worker instance ${process.env.NODE_APP_INSTANCE}`);
     }
 
-    // 3. Start listening for incoming HTTP requests
-    server = app.listen(PORT, () => {
+    // 3. Start listening for incoming HTTP requests (bound to 0.0.0.0 for Nginx IPv4 reverse proxy)
+    server = app.listen(PORT, '0.0.0.0', () => {
       logger.info(
         `🚀 PGinfo.online API running on port ${PORT} [${process.env.NODE_ENV || 'development'}] (Worker: ${
           process.env.NODE_APP_INSTANCE || 'standalone'

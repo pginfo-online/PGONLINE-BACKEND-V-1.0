@@ -2,21 +2,24 @@ const mongoose = require('mongoose');
 const dns = require('dns');
 const { logger } = require('../utils/logger');
 
-// In development or when explicitly enabled, configure fallback DNS for mongodb+srv:// resolution.
-// In production on AWS VPC, this remains OFF by default to preserve Route 53 VPC resolver functionality.
-const shouldUseFallbackDns =
-  process.env.USE_FALLBACK_DNS === 'true' ||
-  (process.env.NODE_ENV !== 'production' &&
-    process.env.USE_FALLBACK_DNS !== 'false' &&
-    (process.env.MONGODB_URI || '').startsWith('mongodb+srv://'));
-
-if (shouldUseFallbackDns) {
+// Fallback DNS resolver for mongodb+srv:// records (fixes querySrv ECONNREFUSED on EC2/Ubuntu/Docker)
+const applyFallbackDns = () => {
   try {
     dns.setServers(['8.8.8.8', '1.1.1.1']);
     logger.info('ℹ️ Public DNS servers configured for mongodb+srv resolution (8.8.8.8, 1.1.1.1)');
   } catch (dnsErr) {
     logger.warn(`⚠️ Failed to set fallback DNS servers: ${dnsErr.message}`);
   }
+};
+
+// Enable fallback DNS if explicitly enabled OR if not explicitly disabled when using mongodb+srv://
+const shouldUseFallbackDns =
+  process.env.USE_FALLBACK_DNS === 'true' ||
+  (process.env.USE_FALLBACK_DNS !== 'false' &&
+    (process.env.MONGODB_URI || '').startsWith('mongodb+srv://'));
+
+if (shouldUseFallbackDns) {
+  applyFallbackDns();
 }
 
 const MAX_RETRIES = parseInt(process.env.MONGO_CONNECT_MAX_RETRIES, 10) || 5;
@@ -52,6 +55,11 @@ const connectDB = async () => {
       logger.error(`❌ MongoDB connection attempt ${attempt}/${MAX_RETRIES} failed: ${error.message}`);
       if (attempt >= MAX_RETRIES) {
         throw error;
+      }
+      // If error is SRV DNS lookup related, immediately enforce fallback DNS for subsequent retries
+      if (error.message.includes('querySrv') || error.message.includes('ECONNREFUSED')) {
+        logger.info('🔄 SRV DNS lookup failed. Applying Google/Cloudflare DNS resolver fallback...');
+        applyFallbackDns();
       }
       const backoff = RETRY_INTERVAL_MS * Math.pow(1.5, attempt - 1);
       logger.warn(`⏳ Retrying MongoDB connection in ${Math.round(backoff)}ms...`);
