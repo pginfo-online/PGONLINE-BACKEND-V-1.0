@@ -77,10 +77,10 @@ jobs:
             ${EC2_USERNAME}@${EC2_HOST} << 'EOF'
             set -e
 
-            # Determine application directory (flexible for /var/www/pginfo or /var/www/pginfo/backend)
-            APP_DIR="${EC2_APP_DIR:-/var/www/pginfo}"
-            if [ -d "/var/www/pginfo/backend" ]; then
-              APP_DIR="/var/www/pginfo/backend"
+            # Determine application directory (defaults to /var/www/pginfo-backend)
+            APP_DIR="${EC2_APP_DIR:-/var/www/pginfo-backend}"
+            if [ ! -d "$APP_DIR" ] && [ -d "/var/www/pginfo" ]; then
+              APP_DIR="/var/www/pginfo"
             fi
 
             echo "Target deployment directory: $APP_DIR"
@@ -187,9 +187,9 @@ jobs:
 
           ssh -i private_key.pem -o StrictHostKeyChecking=no \
             ${EC2_USERNAME}@${EC2_HOST} << 'EOF'
-            APP_DIR="${EC2_APP_DIR:-/var/www/pginfo}"
-            if [ -d "/var/www/pginfo/backend" ]; then
-              APP_DIR="/var/www/pginfo/backend"
+            APP_DIR="${EC2_APP_DIR:-/var/www/pginfo-backend}"
+            if [ ! -d "$APP_DIR" ] && [ -d "/var/www/pginfo" ]; then
+              APP_DIR="/var/www/pginfo"
             fi
             cd "$APP_DIR"
 
