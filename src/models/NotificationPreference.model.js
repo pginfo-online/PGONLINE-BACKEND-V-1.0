@@ -56,6 +56,10 @@ const notificationPreferenceSchema = new mongoose.Schema(
 
       // General platform alerts
       general_alerts: { type: Boolean, default: true },
+
+      // Buffet module categories
+      buffet_updates: { type: Boolean, default: true },
+      buffet_reservations: { type: Boolean, default: true },
     },
   },
   {

@@ -37,6 +37,12 @@ const buildSearchQuery = (params) => {
   if (params.isVerified !== undefined) query.isVerified = params.isVerified === 'true';
   if (params.propertyType) query.propertyType = params.propertyType;
 
+  // foodIncluded — separate boolean flag (food cost bundled into rent)
+  if (params.foodIncluded !== undefined) query.foodIncluded = params.foodIncluded === 'true';
+
+  // isAvailable — availability filter
+  if (params.isAvailable !== undefined) query.isAvailable = params.isAvailable === 'true';
+
   // Preferred tenants filter
   if (params.preferredTenants) {
     const tenantType = params.preferredTenants.trim();
@@ -232,39 +238,7 @@ const getPGs = async (params, user = null) => {
       delete pgObj.owner.email;
       delete pgObj.owner.phone;
     }
-
-    // Ensure rent, minRent, maxRent are always reliably computed
-    if (!pgObj.rent || typeof pgObj.rent !== 'object') {
-      pgObj.rent = {};
-    }
-    const rents = [];
-    if (Array.isArray(pgObj.roomConfigs) && pgObj.roomConfigs.length > 0) {
-      pgObj.roomConfigs.forEach((rc) => {
-        const r = Number(rc.rent);
-        if (!isNaN(r) && r > 0) {
-          rents.push(r);
-          if (rc.shareType) {
-            pgObj.rent[rc.shareType] = r;
-          }
-        }
-      });
-    }
-    if (rents.length > 0) {
-      pgObj.minRent = Math.min(...rents);
-      pgObj.maxRent = Math.max(...rents);
-    } else if (typeof pgObj.monthlyPricing === 'number' && pgObj.monthlyPricing > 0) {
-      pgObj.minRent = pgObj.monthlyPricing;
-      pgObj.maxRent = pgObj.monthlyPricing;
-      pgObj.rent.single = pgObj.monthlyPricing;
-    } else if (pgObj.rent && typeof pgObj.rent === 'object') {
-      const objRents = Object.values(pgObj.rent).map(Number).filter((r) => !isNaN(r) && r > 0);
-      if (objRents.length > 0) {
-        pgObj.minRent = Math.min(...objRents);
-        pgObj.maxRent = Math.max(...objRents);
-      }
-    }
-
-    return pgObj;
+    return enrichPGPricing(pgObj, item.rent || item._doc?.rent);
   });
 
   return {
@@ -279,6 +253,91 @@ const getPGs = async (params, user = null) => {
     },
   };
 };
+
+/**
+ * Robust helper to guarantee consistent pricing fields across list & detail
+ */
+function enrichPGPricing(pgObj, rawStoredRent = null) {
+  if (!pgObj) return pgObj;
+
+  // 1. Recover stored rent object if pgObj.rent is missing or empty
+  if (!pgObj.rent || typeof pgObj.rent !== 'object' || Object.keys(pgObj.rent).length === 0) {
+    if (rawStoredRent && typeof rawStoredRent === 'object' && Object.keys(rawStoredRent).length > 0) {
+      pgObj.rent = { ...rawStoredRent };
+    } else {
+      pgObj.rent = pgObj.rent || {};
+    }
+  }
+
+  // 2. Extract rents from roomConfigs if available
+  const rents = [];
+  if (Array.isArray(pgObj.roomConfigs) && pgObj.roomConfigs.length > 0) {
+    pgObj.roomConfigs.forEach((rc) => {
+      const r = Number(rc.rent);
+      if (!isNaN(r) && r > 0) {
+        rents.push(r);
+        if (rc.shareType && !pgObj.rent[rc.shareType]) {
+          pgObj.rent[rc.shareType] = r;
+        }
+      }
+    });
+  }
+
+  // 3. Compute minRent / maxRent
+  if (rents.length > 0) {
+    pgObj.minRent = Math.min(...rents);
+    pgObj.maxRent = Math.max(...rents);
+  } else if (pgObj.rent && typeof pgObj.rent === 'object') {
+    const valid = Object.values(pgObj.rent).map(Number).filter((r) => !isNaN(r) && r > 0);
+    if (valid.length > 0) {
+      pgObj.minRent = Math.min(...valid);
+      pgObj.maxRent = Math.max(...valid);
+    }
+  }
+
+  const monthly = Number(pgObj.monthlyPricing);
+  if (!pgObj.minRent && !isNaN(monthly) && monthly > 0) {
+    pgObj.minRent = monthly;
+    pgObj.maxRent = monthly;
+    if (!pgObj.rent.single) pgObj.rent.single = monthly;
+  }
+
+  // 4. Synthesize roomConfigs if missing or has no valid rents, so UI always renders room configurations
+  const hasValidRoomConfigRents =
+    Array.isArray(pgObj.roomConfigs) &&
+    pgObj.roomConfigs.length > 0 &&
+    pgObj.roomConfigs.some((rc) => Number(rc.rent) > 0);
+
+  if (!hasValidRoomConfigRents) {
+    const synthetic = [];
+    if (pgObj.rent && typeof pgObj.rent === 'object') {
+      Object.entries(pgObj.rent).forEach(([shareType, rentVal]) => {
+        const r = Number(rentVal);
+        if (!isNaN(r) && r > 0) {
+          synthetic.push({
+            shareType,
+            rent: r,
+            availableBeds: pgObj.isAvailable ? 1 : 0,
+            totalBeds: 1,
+            depositAmount: pgObj.securityDeposit || 0,
+          });
+        }
+      });
+    }
+    if (synthetic.length === 0 && pgObj.minRent) {
+      synthetic.push({
+        shareType: 'standard',
+        rent: pgObj.minRent,
+        availableBeds: pgObj.isAvailable ? 1 : 0,
+        totalBeds: 1,
+        depositAmount: pgObj.securityDeposit || 0,
+      });
+    }
+    pgObj.roomConfigs = synthetic;
+  }
+
+  return pgObj;
+}
 
 /**
  * Get single PG by ID (increments view count)
@@ -296,6 +355,7 @@ const getPGById = async (id, user = null) => {
     throw err;
   }
 
+  const rawStoredRent = pg._doc?.rent;
   const pgObj = pg.toObject();
   const isGuest = !user;
   pgObj.isPublicPreview = isGuest;
@@ -321,34 +381,8 @@ const getPGById = async (id, user = null) => {
     }
   }
 
-  // Ensure rent and minRent are reliably populated
-  if (!pgObj.rent || typeof pgObj.rent !== 'object') {
-    pgObj.rent = {};
-  }
-  const detailRents = [];
-  if (Array.isArray(pgObj.roomConfigs) && pgObj.roomConfigs.length > 0) {
-    pgObj.roomConfigs.forEach((rc) => {
-      const r = Number(rc.rent);
-      if (!isNaN(r) && r > 0) {
-        detailRents.push(r);
-        if (rc.shareType) pgObj.rent[rc.shareType] = r;
-      }
-    });
-  }
-  if (detailRents.length > 0) {
-    pgObj.minRent = Math.min(...detailRents);
-    pgObj.maxRent = Math.max(...detailRents);
-  } else if (typeof pgObj.monthlyPricing === 'number' && pgObj.monthlyPricing > 0) {
-    pgObj.minRent = pgObj.monthlyPricing;
-    pgObj.maxRent = pgObj.monthlyPricing;
-    pgObj.rent.single = pgObj.monthlyPricing;
-  } else if (pgObj.rent && typeof pgObj.rent === 'object') {
-    const objRents = Object.values(pgObj.rent).map(Number).filter((r) => !isNaN(r) && r > 0);
-    if (objRents.length > 0) {
-      pgObj.minRent = Math.min(...objRents);
-      pgObj.maxRent = Math.max(...objRents);
-    }
-  }
+  // Ensure rent and minRent and roomConfigs are reliably populated
+  enrichPGPricing(pgObj, rawStoredRent);
 
   return pgObj;
 };

@@ -291,17 +291,25 @@ const pgSchema = new mongoose.Schema(
 // ─── Virtuals ────────────────────────────────────────────────────────────────
 
 /**
- * rent — Computed from roomConfigs.
+ * rent — Computed from roomConfigs or falls back to stored rent object / monthlyPricing.
  * Returns { single: N, double: N, ... } keyed by shareType.
- * Replaces the old top-level `rent` stored field.
  */
 pgSchema.virtual('rent').get(function () {
-  if (!this.roomConfigs || this.roomConfigs.length === 0) return null;
-  const result = {};
-  this.roomConfigs.forEach((rc) => {
-    if (rc.rent != null) result[rc.shareType] = rc.rent;
-  });
-  return Object.keys(result).length > 0 ? result : null;
+  if (this.roomConfigs && this.roomConfigs.length > 0) {
+    const result = {};
+    this.roomConfigs.forEach((rc) => {
+      const r = Number(rc.rent);
+      if (!isNaN(r) && r > 0) result[rc.shareType] = r;
+    });
+    if (Object.keys(result).length > 0) return result;
+  }
+  if (this._doc && this._doc.rent && typeof this._doc.rent === 'object') {
+    return this._doc.rent;
+  }
+  if (typeof this.monthlyPricing === 'number' && this.monthlyPricing > 0) {
+    return { single: this.monthlyPricing };
+  }
+  return null;
 });
 
 /** Total beds across all room configs */
@@ -316,18 +324,38 @@ pgSchema.virtual('availableBeds').get(function () {
   return this.roomConfigs.reduce((sum, rc) => sum + (rc.availableBeds || 0), 0);
 });
 
-/** Lowest rent across all room configurations */
+/** Lowest rent across all room configurations / stored rent / monthlyPricing */
 pgSchema.virtual('minRent').get(function () {
-  if (!this.roomConfigs || this.roomConfigs.length === 0) return null;
-  const rents = this.roomConfigs.map((rc) => rc.rent).filter((r) => r != null && r > 0);
-  return rents.length > 0 ? Math.min(...rents) : null;
+  if (this.roomConfigs && this.roomConfigs.length > 0) {
+    const rents = this.roomConfigs.map((rc) => Number(rc.rent)).filter((r) => !isNaN(r) && r > 0);
+    if (rents.length > 0) return Math.min(...rents);
+  }
+  if (this._doc && this._doc.rent && typeof this._doc.rent === 'object') {
+    const rents = Object.values(this._doc.rent).map(Number).filter((r) => !isNaN(r) && r > 0);
+    if (rents.length > 0) return Math.min(...rents);
+  }
+  const monthly = Number(this.monthlyPricing);
+  if (!isNaN(monthly) && monthly > 0) {
+    return monthly;
+  }
+  return null;
 });
 
-/** Highest rent across all room configurations */
+/** Highest rent across all room configurations / stored rent / monthlyPricing */
 pgSchema.virtual('maxRent').get(function () {
-  if (!this.roomConfigs || this.roomConfigs.length === 0) return null;
-  const rents = this.roomConfigs.map((rc) => rc.rent).filter((r) => r != null && r > 0);
-  return rents.length > 0 ? Math.max(...rents) : null;
+  if (this.roomConfigs && this.roomConfigs.length > 0) {
+    const rents = this.roomConfigs.map((rc) => Number(rc.rent)).filter((r) => !isNaN(r) && r > 0);
+    if (rents.length > 0) return Math.max(...rents);
+  }
+  if (this._doc && this._doc.rent && typeof this._doc.rent === 'object') {
+    const rents = Object.values(this._doc.rent).map(Number).filter((r) => !isNaN(r) && r > 0);
+    if (rents.length > 0) return Math.max(...rents);
+  }
+  const monthly = Number(this.monthlyPricing);
+  if (!isNaN(monthly) && monthly > 0) {
+    return monthly;
+  }
+  return null;
 });
 
 // ─── Indexes ─────────────────────────────────────────────────────────────────

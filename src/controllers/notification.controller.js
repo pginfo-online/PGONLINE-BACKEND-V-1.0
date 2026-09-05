@@ -134,6 +134,35 @@ exports.getUnreadCount = asyncHandler(async (req, res) => {
 });
 
 /**
+ * GET /api/v1/notifications/:id
+ * Get single notification detail and auto-mark as read.
+ */
+exports.getNotificationById = asyncHandler(async (req, res) => {
+  const item = await NotificationInbox.findOne({
+    _id: req.params.id,
+    user: req.user._id,
+    isDeleted: false,
+  });
+
+  if (!item) return errorResponse(res, 'Notification not found', 404);
+
+  if (!item.isRead) {
+    item.isRead = true;
+    item.readAt = new Date();
+    await item.save();
+
+    if (item.notification) {
+      NotificationReceipt.findOneAndUpdate(
+        { notification: item.notification, user: req.user._id },
+        { status: 'opened', openedAt: new Date() }
+      ).catch(() => {});
+    }
+  }
+
+  return successResponse(res, 'Notification details fetched', item);
+});
+
+/**
  * PUT /api/v1/notifications/:id/read
  * Mark a single notification as read.
  */
@@ -215,7 +244,8 @@ exports.updatePreferences = asyncHandler(async (req, res) => {
   if (categories && typeof categories === 'object') {
     const ALLOWED_CATEGORIES = [
       'pg_updates', 'booking_updates', 'payment_updates', 'rent_reminders',
-      'complaints', 'maintenance', 'tasks', 'jobs', 'promotions', 'announcements', 'general_alerts',
+      'complaints', 'maintenance', 'tasks', 'jobs', 'promotions', 'announcements',
+      'general_alerts', 'buffet_updates', 'buffet_reservations',
     ];
     for (const key of ALLOWED_CATEGORIES) {
       if (typeof categories[key] === 'boolean') {

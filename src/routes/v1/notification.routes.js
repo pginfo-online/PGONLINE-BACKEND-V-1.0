@@ -7,6 +7,7 @@ const {
   updateDevice,
   removeDevice,
   getMyNotifications,
+  getNotificationById,
   getUnreadCount,
   markRead,
   markAllRead,
@@ -27,6 +28,7 @@ router.delete('/devices/:id',    removeDevice);
 router.get('/unread-count',      getUnreadCount);   // must be before /:id routes
 router.put('/read-all',          markAllRead);
 router.get('/',                  getMyNotifications);
+router.get('/:id',               getNotificationById);
 router.put('/:id/read',          markRead);
 router.delete('/:id',            deleteNotification);
 
