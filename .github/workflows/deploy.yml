@@ -1,0 +1,209 @@
+name: Deploy PGinfo Backend to AWS EC2
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: # Manual trigger from GitHub Actions tab
+
+jobs:
+  build:
+    name: Package Application
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate syntax & entry point
+        run: |
+          node --check server.js
+          echo "Syntax check passed for server.js"
+
+      - name: Create deployment package (excluding node_modules)
+        run: |
+          mkdir -p deploy
+          cp server.js deploy/
+          cp -r src deploy/
+          cp package*.json deploy/
+          cp ecosystem.config.cjs deploy/
+          [ -f .env.example ] && cp .env.example deploy/ || echo "No .env.example found"
+          [ -f nginx.conf.example ] && cp nginx.conf.example deploy/ || echo "No nginx.conf.example found"
+          tar -czf deploy.tar.gz -C deploy .
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-package
+          path: deploy.tar.gz
+          retention-days: 1
+
+  deploy:
+    name: Deploy to AWS EC2
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: deployment-package
+
+      - name: Deploy to EC2 via SSH
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USERNAME: ${{ secrets.EC2_USERNAME }}
+          SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_KEY }}
+          EC2_APP_DIR: ${{ secrets.EC2_APP_DIR }}
+        run: |
+          # Create SSH key file
+          echo "$SSH_PRIVATE_KEY" > private_key.pem
+          chmod 600 private_key.pem
+
+          # Copy deployment package to EC2
+          scp -i private_key.pem -o StrictHostKeyChecking=no \
+            deploy.tar.gz ${EC2_USERNAME}@${EC2_HOST}:/tmp/
+
+          # SSH into EC2 and deploy
+          ssh -i private_key.pem -o StrictHostKeyChecking=no \
+            ${EC2_USERNAME}@${EC2_HOST} << 'EOF'
+            set -e
+
+            # Determine application directory (flexible for /var/www/pginfo or /var/www/pginfo/backend)
+            APP_DIR="${EC2_APP_DIR:-/var/www/pginfo}"
+            if [ -d "/var/www/pginfo/backend" ]; then
+              APP_DIR="/var/www/pginfo/backend"
+            fi
+
+            echo "Target deployment directory: $APP_DIR"
+            sudo mkdir -p "$APP_DIR"
+            sudo chown -R $USER:$USER "$APP_DIR"
+            cd "$APP_DIR"
+
+            # Backup current active version
+            if [ -f "server.js" ] || [ -d "src" ]; then
+              echo "Backing up current deployment..."
+              timestamp=$(date +%Y%m%d_%H%M%S)
+              mkdir -p backups
+              tar -czf backups/backup_${timestamp}.tar.gz server.js src package*.json ecosystem.config.cjs .env 2>/dev/null || true
+              # Retain only last 5 backups
+              ls -t backups/backup_*.tar.gz 2>/dev/null | tail -n +6 | xargs -r rm
+            fi
+
+            # Extract new deployment package
+            echo "Extracting new deployment package..."
+            tar --overwrite -xzf /tmp/deploy.tar.gz -C "$APP_DIR"
+            rm -f /tmp/deploy.tar.gz
+
+            # Install production dependencies cleanly
+            echo "Installing production dependencies..."
+            npm ci --omit=dev
+
+            # Ensure default .env exists if first deployment
+            if [ ! -f .env ]; then
+              if [ -f .env.example ]; then
+                echo "Creating .env from .env.example..."
+                cp .env.example .env
+              else
+                echo "Creating fallback .env..."
+                echo "NODE_ENV=production" > .env
+                echo "PORT=5001" >> .env
+              fi
+            fi
+
+            # Ensure logs directory exists
+            mkdir -p logs
+
+            # Zero-downtime cluster reload with PM2
+            if pm2 describe pginfo-backend > /dev/null 2>&1; then
+              echo "Reloading pginfo-backend (zero-downtime cluster reload)..."
+              pm2 reload ecosystem.config.cjs --env production --update-env
+            else
+              echo "Starting pginfo-backend cluster with PM2..."
+              pm2 start ecosystem.config.cjs --env production
+            fi
+
+            # Save PM2 state across server restarts
+            pm2 save
+            echo "Deployment completed successfully on host."
+          EOF
+
+          # Cleanup local SSH key
+          rm -f private_key.pem
+
+      - name: Verify deployment health
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+        run: |
+          echo "Waiting 10 seconds for PM2 cluster and database connection..."
+          sleep 10
+
+          # Poll health check endpoint with retries
+          for i in {1..6}; do
+            echo "Health verification attempt $i of 6..."
+            
+            # 1. Try Nginx reverse proxy endpoint (/health)
+            response=$(curl -s -o /dev/null -w "%{http_code}" "http://${EC2_HOST}/health" 2>/dev/null || echo "000")
+            if [ "$response" = "200" ] || [ "$response" = "301" ] || [ "$response" = "302" ]; then
+              echo "✅ Deployment verified! App responded with HTTP $response on /health"
+              exit 0
+            fi
+
+            # 2. Try direct Node.js port 5001 (/health) in case Nginx is not yet active
+            direct_response=$(curl -s -o /dev/null -w "%{http_code}" "http://${EC2_HOST}:5001/health" 2>/dev/null || echo "000")
+            if [ "$direct_response" = "200" ]; then
+              echo "✅ Deployment verified! App responded with HTTP 200 on port 5001 /health"
+              exit 0
+            fi
+
+            echo "Response: $response (direct: $direct_response). Retrying in 5 seconds..."
+            sleep 5
+          done
+
+          echo "❌ Deployment verification failed after 6 attempts."
+          echo "Please inspect PM2 logs on the server: pm2 logs pginfo-backend --lines 50"
+          exit 1
+
+      - name: Rollback on failure
+        if: failure()
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USERNAME: ${{ secrets.EC2_USERNAME }}
+          SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_KEY }}
+          EC2_APP_DIR: ${{ secrets.EC2_APP_DIR }}
+        run: |
+          echo "🔄 Attempting automatic rollback to previous release..."
+
+          echo "$SSH_PRIVATE_KEY" > private_key.pem
+          chmod 600 private_key.pem
+
+          ssh -i private_key.pem -o StrictHostKeyChecking=no \
+            ${EC2_USERNAME}@${EC2_HOST} << 'EOF'
+            APP_DIR="${EC2_APP_DIR:-/var/www/pginfo}"
+            if [ -d "/var/www/pginfo/backend" ]; then
+              APP_DIR="/var/www/pginfo/backend"
+            fi
+            cd "$APP_DIR"
+
+            latest_backup=$(ls -t backups/backup_*.tar.gz 2>/dev/null | head -1)
+
+            if [ -n "$latest_backup" ]; then
+              echo "Restoring backup: $latest_backup"
+              tar -xzf "$latest_backup" -C "$APP_DIR"
+              npm ci --omit=dev
+              pm2 reload ecosystem.config.cjs --env production
+              echo "✅ Successfully rolled back to previous version"
+            else
+              echo "⚠️ No previous backup archive found in $APP_DIR/backups, cannot auto-rollback"
+            fi
+          EOF
+
+          rm -f private_key.pem
