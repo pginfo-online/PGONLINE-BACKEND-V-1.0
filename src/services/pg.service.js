@@ -46,7 +46,6 @@ const buildSearchQuery = (params) => {
   // Preferred tenants filter
   if (params.preferredTenants) {
     const tenantType = params.preferredTenants.trim();
-    query.$or = query.$or || [];
     query.preferredTenants = { $in: [tenantType, 'any'] };
   }
 
@@ -86,6 +85,7 @@ const buildSearchQuery = (params) => {
       { landmark: qRegex },
       { city: qRegex },
       { description: qRegex },
+      { 'nearbyPlaces.name': qRegex },
     ];
 
     if (query.roomConfigs) {
@@ -198,6 +198,8 @@ const getPGs = async (params, user = null) => {
           photos: 1, isVerified: 1, isAvailable: 1, status: 1,
           createdAt: 1, distance: 1, latitude: 1, longitude: 1, location: 1,
           dataQualityScore: 1, monthlyPricing: 1, rent: 1,
+          nearbyPlaces: 1, amenities: 1, propertyType: 1, rules: 1,
+          description: 1, securityDeposit: 1, noticePeriod: 1, foodInfo: 1,
           'owner._id': 1, 'owner.name': 1, 'owner.email': 1, 'owner.phone': 1,
         },
       },
@@ -217,7 +219,8 @@ const getPGs = async (params, user = null) => {
       PG.find(query)
         .select(
           'name city area address roomConfigs food ac gender preferredTenants photos monthlyPricing rent ' +
-          'isVerified isAvailable status owner createdAt latitude longitude location dataQualityScore'
+          'isVerified isAvailable status owner createdAt latitude longitude location dataQualityScore ' +
+          'nearbyPlaces amenities propertyType rules description securityDeposit noticePeriod foodInfo'
         )
         .populate('owner', 'name email phone')
         .sort(sort)
@@ -802,6 +805,23 @@ const getSuggestions = async (query, sessiontoken) => {
         if (!suggestionsMap.has(key)) {
           suggestionsMap.set(key, { text: pg.landmark, type: 'landmark', city: pg.city, source: 'local' });
         }
+      }
+      if (Array.isArray(pg.nearbyPlaces)) {
+        pg.nearbyPlaces.forEach((np) => {
+          if (np?.name && regex.test(np.name)) {
+            const key = `nearby:${_normalizeText(np.name)}`;
+            if (!suggestionsMap.has(key)) {
+              suggestionsMap.set(key, {
+                text: np.name,
+                type: 'nearby_place',
+                placeType: np.placeType || 'other',
+                area: pg.area,
+                city: pg.city,
+                source: 'local',
+              });
+            }
+          }
+        });
       }
     });
   } catch (dbErr) {
