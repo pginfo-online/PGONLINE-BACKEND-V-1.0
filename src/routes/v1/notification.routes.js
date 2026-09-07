@@ -24,6 +24,11 @@ router.post('/devices',          registerDevice);
 router.put('/devices/:id',       updateDevice);
 router.delete('/devices/:id',    removeDevice);
 
+// ─── Preferences ──────────────────────────────────────────────────────────────
+// Must be declared before /:id routes to prevent Express capturing 'preferences' as :id
+router.get('/preferences',       getPreferences);
+router.put('/preferences',       updatePreferences);
+
 // ─── Inbox ────────────────────────────────────────────────────────────────────
 router.get('/unread-count',      getUnreadCount);   // must be before /:id routes
 router.put('/read-all',          markAllRead);
@@ -31,9 +36,5 @@ router.get('/',                  getMyNotifications);
 router.get('/:id',               getNotificationById);
 router.put('/:id/read',          markRead);
 router.delete('/:id',            deleteNotification);
-
-// ─── Preferences ──────────────────────────────────────────────────────────────
-router.get('/preferences',       getPreferences);
-router.put('/preferences',       updatePreferences);
 
 module.exports = router;

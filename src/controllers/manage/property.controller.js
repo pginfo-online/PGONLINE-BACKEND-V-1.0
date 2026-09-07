@@ -6,6 +6,54 @@ const Room     = require('../../models/Room.model');
 const Bed      = require('../../models/Bed.model');
 const PG       = require('../../models/PG.model');
 
+// ─── Stats Sync Helper ───────────────────────────────────────────────────────
+/**
+ * Recompute and persist Building & Floor stats from actual Room/Bed data.
+ * Call after any Room or Bed mutation.
+ */
+const syncBuildingFloorStats = async (buildingId, floorId) => {
+  if (floorId) {
+    const [floorStats] = await Bed.aggregate([
+      { $match: { floor: floorId } },
+      {
+        $group: {
+          _id: null,
+          totalBeds:    { $sum: 1 },
+          occupiedBeds: { $sum: { $cond: [{ $eq: ['$status', 'occupied'] }, 1, 0] } },
+          vacantBeds:   { $sum: { $cond: [{ $eq: ['$status', 'vacant'] },   1, 0] } },
+        },
+      },
+    ]);
+    const totalRooms = await Room.countDocuments({ floor: floorId });
+    await Floor.findByIdAndUpdate(floorId, {
+      'stats.totalRooms':   totalRooms,
+      'stats.totalBeds':    floorStats?.totalBeds || 0,
+      'stats.occupiedBeds': floorStats?.occupiedBeds || 0,
+      'stats.vacantBeds':   floorStats?.vacantBeds || 0,
+    });
+  }
+  if (buildingId) {
+    const [buildingStats] = await Bed.aggregate([
+      { $match: { building: buildingId } },
+      {
+        $group: {
+          _id: null,
+          totalBeds:    { $sum: 1 },
+          occupiedBeds: { $sum: { $cond: [{ $eq: ['$status', 'occupied'] }, 1, 0] } },
+          vacantBeds:   { $sum: { $cond: [{ $eq: ['$status', 'vacant'] },   1, 0] } },
+        },
+      },
+    ]);
+    const totalRooms = await Room.countDocuments({ building: buildingId });
+    await Building.findByIdAndUpdate(buildingId, {
+      'stats.totalRooms':   totalRooms,
+      'stats.totalBeds':    buildingStats?.totalBeds || 0,
+      'stats.occupiedBeds': buildingStats?.occupiedBeds || 0,
+      'stats.vacantBeds':   buildingStats?.vacantBeds || 0,
+    });
+  }
+};
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const assertOwnsBuilding = async (buildingId, ownerId) => {
   const building = await Building.findOne({ _id: buildingId, owner: ownerId });
@@ -30,13 +78,27 @@ exports.createBuilding = asyncHandler(async (req, res) => {
   return successResponse(res, 'Building created successfully', building, 201);
 });
 
-// ─── List Buildings for a PG ──────────────────────────────────────────────────
 exports.getBuildings = asyncHandler(async (req, res) => {
   const { pgId }  = req.params;
   const ownerId   = req.user._id;
 
   const pg = await PG.findOne({ _id: pgId, owner: ownerId });
   if (!pg) return errorResponse(res, 'PG not found or access denied', 404);
+
+  if (req.query.page) {
+    const page  = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 20));
+    const skip  = (page - 1) * limit;
+
+    const [buildings, total] = await Promise.all([
+      Building.find({ pg: pgId, owner: ownerId }).sort({ createdAt: 1 }).skip(skip).limit(limit),
+      Building.countDocuments({ pg: pgId, owner: ownerId }),
+    ]);
+
+    return paginatedResponse(res, 'Buildings fetched', buildings, {
+      page, limit, total, pages: Math.ceil(total / limit),
+    });
+  }
 
   const buildings = await Building.find({ pg: pgId, owner: ownerId }).sort({ createdAt: 1 });
   return successResponse(res, 'Buildings fetched', buildings);
@@ -153,6 +215,9 @@ exports.createRoom = asyncHandler(async (req, res) => {
     await room.save();
   }
 
+  // Sync parent stats
+  await syncBuildingFloorStats(floor.building, floor._id);
+
   return successResponse(res, 'Room created with beds', room, 201);
 });
 
@@ -192,8 +257,13 @@ exports.deleteRoom = asyncHandler(async (req, res) => {
     return errorResponse(res, `Cannot delete room with ${occupiedBeds} occupied bed(s).`, 400);
   }
 
+  const { building, floor } = room;
   await Bed.deleteMany({ room: room._id });
   await room.deleteOne();
+
+  // Sync parent stats
+  await syncBuildingFloorStats(building, floor);
+
   return successResponse(res, 'Room and its beds deleted');
 });
 
@@ -206,7 +276,59 @@ exports.updateBed = asyncHandler(async (req, res) => {
   ALLOWED.forEach((key) => { if (req.body[key] !== undefined) bed[key] = req.body[key]; });
 
   await bed.save();
+
+  // Sync parent stats on status change
+  await syncBuildingFloorStats(bed.building, bed.floor);
+
   return successResponse(res, 'Bed updated', bed);
+});
+
+// ─── List Beds for a Room ─────────────────────────────────────────────────────
+exports.getBeds = asyncHandler(async (req, res) => {
+  const room = await Room.findOne({ _id: req.params.roomId, owner: req.user._id });
+  if (!room) return errorResponse(res, 'Room not found or access denied', 404);
+
+  const beds = await Bed.find({ room: room._id })
+    .populate('currentTenant', 'name phone')
+    .sort({ bedLabel: 1 });
+
+  return successResponse(res, 'Beds fetched', beds);
+});
+
+// ─── Property Hierarchy (efficient loading for mobile) ────────────────────────
+exports.getPropertyHierarchy = asyncHandler(async (req, res) => {
+  const { pgId } = req.params;
+  const ownerId  = req.user._id;
+
+  const pg = await PG.findOne({ _id: pgId, owner: ownerId }).select('_id name city area');
+  if (!pg) return errorResponse(res, 'PG not found or access denied', 404);
+
+  const buildings = await Building.find({ pg: pgId, owner: ownerId }).sort({ createdAt: 1 }).lean();
+
+  // For each building, fetch floors with rooms and beds
+  const hierarchy = await Promise.all(
+    buildings.map(async (building) => {
+      const floors = await Floor.find({ building: building._id }).sort({ floorNumber: 1 }).lean();
+      const floorsWithRooms = await Promise.all(
+        floors.map(async (floor) => {
+          const rooms = await Room.find({ floor: floor._id }).sort({ roomNumber: 1 }).lean();
+          const roomsWithBeds = await Promise.all(
+            rooms.map(async (room) => {
+              const beds = await Bed.find({ room: room._id })
+                .populate('currentTenant', 'name phone')
+                .sort({ bedLabel: 1 })
+                .lean();
+              return { ...room, beds };
+            })
+          );
+          return { ...floor, rooms: roomsWithBeds };
+        })
+      );
+      return { ...building, floors: floorsWithRooms };
+    })
+  );
+
+  return successResponse(res, 'Property hierarchy fetched', { pg, buildings: hierarchy });
 });
 
 // ─── Availability Overview ────────────────────────────────────────────────────

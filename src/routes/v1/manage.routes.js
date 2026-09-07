@@ -66,7 +66,9 @@ router.delete('/rooms/:id', ownerOrAdmin, propertyController.deleteRoom);
 
 // Bed APIs & Availability Overview
 router.put('/beds/:id', ownerOrAdmin, validate(validators.updateBedSchema), propertyController.updateBed);
+router.get('/rooms/:roomId/beds', ownerOrAdmin, propertyController.getBeds);
 router.get('/pgs/:pgId/availability', ownerOrAdmin, propertyController.getAvailability);
+router.get('/pgs/:pgId/hierarchy', ownerOrAdmin, propertyController.getPropertyHierarchy);
 
 // Tenant Management APIs
 router.get('/tenants/search-existing', ownerOrAdmin, tenantController.searchExistingTenants);
@@ -106,11 +108,11 @@ router.get('/pgs/:pgId/payments', ownerOrAdmin, paymentController.getPayments);
 router.post('/pgs/:pgId/payments/manual', ownerOrAdmin, paymentController.recordManualPayment);
 
 // Digital Agreements APIs
-router.post('/pgs/:pgId/agreements', ownerOrAdmin, agreementController.createAgreement);
+router.post('/pgs/:pgId/agreements', ownerOrAdmin, validate(validators.createAgreementSchema), agreementController.createAgreement);
 router.get('/pgs/:pgId/agreements', ownerOrAdmin, agreementController.getAgreements);
 router.get('/agreements/:id', agreementController.getAgreement);
 router.get('/agreements/:id/pdf', agreementController.downloadPDF);
-router.put('/agreements/:id', ownerOrAdmin, agreementController.updateAgreement);
+router.put('/agreements/:id', ownerOrAdmin, validate(validators.updateAgreementSchema), agreementController.updateAgreement);
 router.post('/agreements/:id/regenerate-pdf', ownerOrAdmin, agreementController.regeneratePDF);
 
 // Expense Tracking APIs

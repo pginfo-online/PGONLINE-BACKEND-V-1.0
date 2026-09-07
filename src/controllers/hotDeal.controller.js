@@ -268,6 +268,15 @@ const discoverDeals = asyncHandler(async (req, res) => {
   if (req.query.category) filter.category = req.query.category;
   if (req.query.featured === 'true') filter.isFeatured = true;
 
+  if (req.query.search && req.query.search.trim()) {
+    const s = req.query.search.trim();
+    filter.$or = [
+      { title: { $regex: s, $options: 'i' } },
+      { shortDescription: { $regex: s, $options: 'i' } },
+      { providerName: { $regex: s, $options: 'i' } },
+    ];
+  }
+
   // City targeting: show deals matching user's city OR deals with no city restriction
   if (req.query.cityId) {
     filter.$or = [

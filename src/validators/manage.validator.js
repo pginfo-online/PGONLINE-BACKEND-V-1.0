@@ -138,6 +138,38 @@ const applyJobSchema = z.object({
   currentLocation: z.string().optional(),
 });
 
+// Agreement validation schemas
+const createAgreementSchema = z.object({
+  tenantId: z.string().min(1, 'Tenant ID is required'),
+  startDate: z.string().min(1, 'Start date is required'),
+  endDate: z.string().min(1, 'End date is required'),
+  monthlyRent: z.number().min(0, 'Monthly rent required').optional(),
+  securityDeposit: z.number().min(0).optional(),
+  noticePeriodDays: z.number().min(0).optional(),
+  rentDueDay: z.number().int().min(1).max(28).optional(),
+  terms: z.string().max(5000).optional(),
+  rules: z.object({
+    guestPolicy: z.string().optional(),
+    foodPolicy: z.string().optional(),
+    smokingAllowed: z.boolean().optional(),
+    petsAllowed: z.boolean().optional(),
+    other: z.string().optional(),
+  }).optional(),
+});
+
+const updateAgreementSchema = z.object({
+  terms: z.string().max(5000).optional(),
+  rules: z.object({
+    guestPolicy: z.string().optional(),
+    foodPolicy: z.string().optional(),
+    smokingAllowed: z.boolean().optional(),
+    petsAllowed: z.boolean().optional(),
+    other: z.string().optional(),
+  }).optional(),
+  status: z.enum(['draft', 'active', 'expired', 'terminated', 'renewed']).optional(),
+  terminationReason: z.string().max(500).optional(),
+});
+
 module.exports = {
   createBuildingSchema, updateBuildingSchema,
   createFloorSchema, updateFloorSchema,
@@ -147,4 +179,5 @@ module.exports = {
   generateRentSchema, markRentPaidSchema,
   addExpenseSchema,
   createJobPostSchema, applyJobSchema,
+  createAgreementSchema, updateAgreementSchema,
 };

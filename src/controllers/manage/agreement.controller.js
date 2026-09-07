@@ -4,6 +4,7 @@ const Agreement = require('../../models/Agreement.model');
 const Tenant    = require('../../models/Tenant.model');
 const PG        = require('../../models/PG.model');
 const agreementService = require('../../services/manage/agreement.service');
+const notificationTrigger = require('../../services/notification/notification.trigger');
 
 // ─── Create Agreement ─────────────────────────────────────────────────────────
 exports.createAgreement = asyncHandler(async (req, res) => {
@@ -48,6 +49,9 @@ exports.createAgreement = asyncHandler(async (req, res) => {
     // Non-blocking for creation flow, owner can regenerate
   }
 
+  // Fire transactional notification to tenant
+  notificationTrigger.onAgreementCreated(agreement);
+
   return successResponse(res, 'Agreement created successfully', agreement, 201);
 });
 
@@ -62,12 +66,31 @@ exports.getAgreements = asyncHandler(async (req, res) => {
   const filter = { pg: pgId, owner: ownerId };
   if (req.query.status) filter.status = req.query.status;
 
-  const agreements = await Agreement.find(filter)
-    .populate('tenant', 'name phone email')
-    .populate('room',   'roomNumber')
-    .sort({ createdAt: -1 });
+  // Pagination
+  const page  = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const limit = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 20));
+  const skip  = (page - 1) * limit;
 
-  return successResponse(res, 'Agreements fetched', agreements);
+  const [agreements, total] = await Promise.all([
+    Agreement.find(filter)
+      .populate('tenant', 'name phone email')
+      .populate('room',   'roomNumber')
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit),
+    Agreement.countDocuments(filter),
+  ]);
+
+  const pagination = {
+    total,
+    page,
+    limit,
+    totalPages: Math.max(1, Math.ceil(total / limit)),
+    hasNext: page * limit < total,
+    hasPrev: page > 1,
+  };
+
+  return successResponse(res, 'Agreements fetched', { agreements, pagination });
 });
 
 // ─── Get Single Agreement ─────────────────────────────────────────────────────

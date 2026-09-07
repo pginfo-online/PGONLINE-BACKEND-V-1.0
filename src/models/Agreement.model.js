@@ -125,7 +125,6 @@ const agreementSchema = new mongoose.Schema(
 agreementSchema.index({ tenant: 1, status: 1 });
 agreementSchema.index({ pg: 1, status: 1 });
 agreementSchema.index({ owner: 1, createdAt: -1 });
-agreementSchema.index({ agreementNumber: 1 });
 agreementSchema.index({ endDate: 1, status: 1 }); // for expiry jobs
 
 module.exports = mongoose.model('Agreement', agreementSchema);

@@ -12,7 +12,11 @@ exports.getDashboardSummary = asyncHandler(async (req, res) => {
   const ownerId = req.user._id;
 
   // 1. Get all PGs owned by user
-  const pgs = await PG.find({ owner: ownerId }).select('_id name city area totalBeds availableBeds');
+  // Note: totalBeds & availableBeds are Mongoose virtuals (computed from roomConfigs).
+  // They cannot be .select()'d — we must fetch the needed base fields and let virtuals compute.
+  const pgs = await PG.find({ owner: ownerId })
+    .select('_id name city area roomConfigs monthlyPricing')
+    .lean({ virtuals: true });
   const pgIds = pgs.map(p => p._id);
 
   if (pgIds.length === 0) {

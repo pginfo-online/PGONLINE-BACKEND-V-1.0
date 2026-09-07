@@ -52,7 +52,18 @@ const buildDiscoveryQuery = (params) => {
     expiresAt: { $gt: now },
   };
 
-  if (params.city) query.city = params.city;
+  if (params.city) {
+    query.city = { $regex: new RegExp(`^${params.city.trim()}$`, 'i') };
+  }
+
+  if (params.search && params.search.trim()) {
+    const s = params.search.trim();
+    query.$or = [
+      { name: { $regex: s, $options: 'i' } },
+      { cuisine: { $regex: s, $options: 'i' } },
+      { area: { $regex: s, $options: 'i' } },
+    ];
+  }
 
   if (params.area) {
     const areas = String(params.area)
