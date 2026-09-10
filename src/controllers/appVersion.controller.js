@@ -79,15 +79,6 @@ const checkAppVersion = asyncHandler(async (req, res) => {
     targetVersion = activeVersions[activeVersions.length - 1];
   }
 
-  // Check Maintenance Mode
-  if (targetVersion.maintenanceMode) {
-    return successResponse(res, 'App is currently in maintenance mode', {
-      updateRequired: false,
-      maintenanceMode: true,
-      maintenanceMessage: targetVersion.maintenanceMessage,
-    });
-  }
-
   const comparison = compareSemver(version, targetVersion.version);
   const minVersionComparison = compareSemver(version, targetVersion.minVersion);
 
@@ -97,6 +88,14 @@ const checkAppVersion = asyncHandler(async (req, res) => {
       updateRequired: false,
       maintenanceMode: false,
       currentLatest: targetVersion.version,
+    });
+  }
+
+  if (targetVersion.maintenanceMode) {
+    return successResponse(res, 'App is currently in maintenance mode', {
+      updateRequired: false,
+      maintenanceMode: true,
+      maintenanceMessage: targetVersion.maintenanceMessage,
     });
   }
 
