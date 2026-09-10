@@ -4,7 +4,7 @@ const checkVersionSchema = z.object({
   platform: z.enum(['android', 'ios'], {
     errorMap: () => ({ message: "Platform must be 'android' or 'ios'" }),
   }),
-  version: z.string().min(1, 'Version is required'),
+  version: z.string().regex(/^\d+\.\d+\.\d+$/, 'Version must follow semver format (e.g. 1.0.0)'),
   deviceId: z.string().optional(),
 });
 

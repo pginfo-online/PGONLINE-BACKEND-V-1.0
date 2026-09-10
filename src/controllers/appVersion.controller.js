@@ -5,12 +5,11 @@ const AppVersionAudit = require('../models/AppVersionAudit.model');
 
 // Semver comparison helpers
 const parseSemver = (v) => {
-  const clean = (v || '').replace(/[^0-9.]/g, '');
-  const parts = clean.split('.').map((p) => parseInt(p, 10) || 0);
+  const parts = String(v || '').trim().split('.').map((p) => Number.parseInt(p, 10));
   return {
-    major: parts[0] || 0,
-    minor: parts[1] || 0,
-    patch: parts[2] || 0,
+    major: Number.isInteger(parts[0]) ? parts[0] : 0,
+    minor: Number.isInteger(parts[1]) ? parts[1] : 0,
+    patch: Number.isInteger(parts[2]) ? parts[2] : 0,
   };
 };
 
@@ -40,7 +39,8 @@ const getRolloutGroup = (deviceId) => {
 const checkAppVersion = asyncHandler(async (req, res) => {
   const { platform, version, deviceId } = req.query;
 
-  // Retrieve active versions, sorted from newest to oldest
+  // Sort by semantic version in memory; MongoDB string sorting puts 1.10.0
+  // before 1.9.0 and can select the wrong release.
   const activeVersions = await AppVersion.find({
     platform,
     isActive: true,
@@ -48,7 +48,13 @@ const checkAppVersion = asyncHandler(async (req, res) => {
       { scheduledRelease: null },
       { scheduledRelease: { $lte: new Date() } }
     ]
-  }).sort({ createdAt: -1 }).lean();
+  }).lean();
+
+  activeVersions.sort((a, b) => {
+    const versionOrder = compareSemver(b.version, a.version);
+    if (versionOrder !== 0) return versionOrder;
+    return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
+  });
 
   if (activeVersions.length === 0) {
     return successResponse(res, 'No version configuration found', {
@@ -119,7 +125,20 @@ const checkAppVersion = asyncHandler(async (req, res) => {
  */
 const getLatestVersionRaw = asyncHandler(async (req, res) => {
   const { platform } = req.query;
-  const latest = await AppVersion.findOne({ platform, isActive: true }).sort({ createdAt: -1 });
+  const activeVersions = await AppVersion.find({
+    platform,
+    isActive: true,
+    $or: [
+      { scheduledRelease: null },
+      { scheduledRelease: { $lte: new Date() } },
+    ],
+  }).lean();
+  activeVersions.sort((a, b) => {
+    const versionOrder = compareSemver(b.version, a.version);
+    if (versionOrder !== 0) return versionOrder;
+    return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
+  });
+  const latest = activeVersions[0];
   if (!latest) {
     return res.status(404).json({ success: false, message: 'No active version config found' });
   }
