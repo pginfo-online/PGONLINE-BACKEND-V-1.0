@@ -7,7 +7,7 @@ const VisitRequest = require('../models/VisitRequest.model');
 const notificationTrigger = require('../services/notification/notification.trigger');
 
 // /**
-//  * @route GET /api/v1/admin/pgs
+//  * @route GET /api/v1/admin/pgs working on new module
 //  */
 // const getAllPGs = asyncHandler(async (req, res) => {
 //   const { status, page = 1, limit = 20 } = req.query;
