@@ -126,6 +126,24 @@ rentRecordSchema.virtual('outstandingAmount').get(function () {
   return Math.max(0, this.totalAmount - this.paidAmount);
 });
 
+// ─── Virtuals for Mobile & Legacy Compatibility ───────────────────────────────
+const MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December'
+];
+
+rentRecordSchema.virtual('month').get(function () {
+  return MONTH_NAMES[this.billingMonth - 1] || `Month ${this.billingMonth}`;
+});
+
+rentRecordSchema.virtual('year').get(function () {
+  return this.billingYear;
+});
+
+rentRecordSchema.virtual('amount').get(function () {
+  return this.totalAmount;
+});
+
 // ─── Compound index: unique record per tenant per billing period ───────────────
 rentRecordSchema.index(
   { tenant: 1, billingMonth: 1, billingYear: 1 },

@@ -75,7 +75,24 @@ exports.createBuilding = asyncHandler(async (req, res) => {
     ...req.body,
   });
 
-  return successResponse(res, 'Building created successfully', building, 201);
+  // Auto-seed initial floors if totalFloors > 0
+  const floorCount = Math.max(1, Number(building.totalFloors) || 1);
+  const floorDocs = Array.from({ length: floorCount }, (_, i) => ({
+    building: building._id,
+    pg: pgId,
+    owner: ownerId,
+    floorNumber: i + 1,
+    name: `Floor ${i + 1}`,
+    status: 'active',
+  }));
+  await Floor.insertMany(floorDocs);
+
+  building.totalFloors = floorCount;
+  building.stats = building.stats || {};
+  building.stats.totalFloors = floorCount;
+  await building.save();
+
+  return successResponse(res, 'Building created successfully with floors initialized', building, 201);
 });
 
 exports.getBuildings = asyncHandler(async (req, res) => {
@@ -127,26 +144,46 @@ exports.updateBuilding = asyncHandler(async (req, res) => {
 exports.deleteBuilding = asyncHandler(async (req, res) => {
   const building = await assertOwnsBuilding(req.params.id, req.user._id);
 
-  // Guard: prevent deletion if floors/rooms exist
-  const floorCount = await Floor.countDocuments({ building: building._id });
-  if (floorCount > 0) {
-    return errorResponse(res, `Cannot delete building with ${floorCount} floor(s). Remove floors first.`, 400);
+  // Guard: prevent deletion if occupied beds exist
+  const occupiedBeds = await Bed.countDocuments({ building: building._id, status: 'occupied' });
+  if (occupiedBeds > 0) {
+    return errorResponse(res, `Cannot delete building with ${occupiedBeds} occupied bed(s). Vacate tenants first.`, 400);
   }
 
+  // Safe cascade deletion of vacant beds, empty rooms, and floors
+  await Bed.deleteMany({ building: building._id });
+  await Room.deleteMany({ building: building._id });
+  await Floor.deleteMany({ building: building._id });
   await building.deleteOne();
-  return successResponse(res, 'Building deleted');
+
+  return successResponse(res, 'Building and associated empty floors/rooms deleted successfully');
 });
 
 // ─── Floor CRUD ───────────────────────────────────────────────────────────────
 exports.createFloor = asyncHandler(async (req, res) => {
   const building = await assertOwnsBuilding(req.params.buildingId, req.user._id);
 
+  const floorNumber = req.body.floorNumber !== undefined ? Number(req.body.floorNumber) : 1;
+  const existingFloor = await Floor.findOne({ building: building._id, floorNumber });
+  if (existingFloor) {
+    return errorResponse(res, `Floor number ${floorNumber} already exists in this building`, 400);
+  }
+
   const floor = await Floor.create({
     building: building._id,
     pg:       building.pg,
     owner:    req.user._id,
     ...req.body,
+    floorNumber,
+    name:     req.body.name || `Floor ${floorNumber}`,
   });
+
+  // Sync building floors stat
+  const totalFloors = await Floor.countDocuments({ building: building._id });
+  building.totalFloors = Math.max(building.totalFloors || 0, totalFloors);
+  if (!building.stats) building.stats = {};
+  building.stats.totalFloors = totalFloors;
+  await building.save();
 
   return successResponse(res, 'Floor created', floor, 201);
 });
@@ -161,6 +198,17 @@ exports.updateFloor = asyncHandler(async (req, res) => {
   const floor = await Floor.findOne({ _id: req.params.id, owner: req.user._id });
   if (!floor) return errorResponse(res, 'Floor not found or access denied', 404);
 
+  if (req.body.floorNumber !== undefined && Number(req.body.floorNumber) !== floor.floorNumber) {
+    const existing = await Floor.findOne({
+      building: floor.building,
+      floorNumber: Number(req.body.floorNumber),
+      _id: { $ne: floor._id },
+    });
+    if (existing) {
+      return errorResponse(res, `Floor number ${req.body.floorNumber} is already in use in this building`, 400);
+    }
+  }
+
   const ALLOWED = ['name', 'floorNumber', 'status'];
   ALLOWED.forEach((key) => { if (req.body[key] !== undefined) floor[key] = req.body[key]; });
 
@@ -172,12 +220,17 @@ exports.deleteFloor = asyncHandler(async (req, res) => {
   const floor = await Floor.findOne({ _id: req.params.id, owner: req.user._id });
   if (!floor) return errorResponse(res, 'Floor not found or access denied', 404);
 
-  const roomCount = await Room.countDocuments({ floor: floor._id });
-  if (roomCount > 0) {
-    return errorResponse(res, `Cannot delete floor with ${roomCount} room(s). Remove rooms first.`, 400);
+  const occupiedBeds = await Bed.countDocuments({ floor: floor._id, status: 'occupied' });
+  if (occupiedBeds > 0) {
+    return errorResponse(res, `Cannot delete floor with ${occupiedBeds} occupied bed(s). Vacate tenants first.`, 400);
   }
 
+  // Safe cascade: delete vacant beds & rooms
+  await Bed.deleteMany({ floor: floor._id });
+  await Room.deleteMany({ floor: floor._id });
   await floor.deleteOne();
+
+  await syncBuildingFloorStats(floor.building, null);
   return successResponse(res, 'Floor deleted');
 });
 
@@ -241,10 +294,49 @@ exports.updateRoom = asyncHandler(async (req, res) => {
   const room = await Room.findOne({ _id: req.params.id, owner: req.user._id });
   if (!room) return errorResponse(res, 'Room not found or access denied', 404);
 
-  const ALLOWED = ['roomNumber', 'shareType', 'rentPerBed', 'status', 'amenities', 'notes'];
+  const ALLOWED = [
+    'roomNumber', 'shareType', 'rentPerBed', 'depositAmount', 'roomSize',
+    'bathroomType', 'acIncluded', 'furnitureIncluded', 'status', 'amenities', 'notes',
+  ];
   ALLOWED.forEach((key) => { if (req.body[key] !== undefined) room[key] = req.body[key]; });
 
+  // Handle totalBeds change
+  if (req.body.totalBeds !== undefined && Number(req.body.totalBeds) !== room.totalBeds) {
+    const newTotal = Number(req.body.totalBeds);
+    if (newTotal > 0 && newTotal <= 12) {
+      const currentBeds = await Bed.find({ room: room._id }).sort({ bedLabel: 1 });
+      if (newTotal > currentBeds.length) {
+        const addCount = newTotal - currentBeds.length;
+        const newBedDocs = Array.from({ length: addCount }, (_, i) => ({
+          room:     room._id,
+          floor:    room.floor,
+          building: room.building,
+          pg:       room.pg,
+          owner:    req.user._id,
+          bedLabel: String.fromCharCode(65 + currentBeds.length + i),
+          status:   'vacant',
+        }));
+        await Bed.insertMany(newBedDocs);
+      } else if (newTotal < currentBeds.length) {
+        const excessCount = currentBeds.length - newTotal;
+        const vacantBedsFromEnd = currentBeds
+          .slice(newTotal)
+          .filter((b) => b.status === 'vacant');
+        if (vacantBedsFromEnd.length < excessCount) {
+          return errorResponse(res, `Cannot reduce beds to ${newTotal} because some beds in that range are occupied`, 400);
+        }
+        const idsToDelete = vacantBedsFromEnd.map((b) => b._id);
+        await Bed.deleteMany({ _id: { $in: idsToDelete } });
+      }
+      room.totalBeds = newTotal;
+      const occupiedCount = await Bed.countDocuments({ room: room._id, status: 'occupied' });
+      room.occupiedBeds = occupiedCount;
+      room.vacantBeds = Math.max(0, newTotal - occupiedCount);
+    }
+  }
+
   await room.save();
+  await syncBuildingFloorStats(room.building, room.floor);
   return successResponse(res, 'Room updated', room);
 });
 
@@ -370,3 +462,5 @@ exports.getAvailability = asyncHandler(async (req, res) => {
     byBuilding,
   });
 });
+
+exports.syncBuildingFloorStats = syncBuildingFloorStats;

@@ -18,6 +18,7 @@ const emergencyContactSchema = new mongoose.Schema(
   {
     name:         { type: String, trim: true },
     relationship: { type: String, trim: true },
+    relation:     { type: String, trim: true },
     phone:        { type: String, trim: true },
   },
   { _id: false }
@@ -153,6 +154,17 @@ const tenantSchema = new mongoose.Schema(
     toObject: { virtuals: true },
   }
 );
+
+// ─── Virtual Getters for Mobile Compatibility ─────────────────────────────────
+tenantSchema.virtual('rentAmount').get(function () {
+  return this.monthlyRent;
+});
+tenantSchema.virtual('joiningDate').get(function () {
+  return this.joinDate;
+});
+tenantSchema.virtual('noticePeriod').get(function () {
+  return this.noticePeriodDays;
+});
 
 // ─── Indexes ──────────────────────────────────────────────────────────────────
 tenantSchema.index({ pg: 1, status: 1 });

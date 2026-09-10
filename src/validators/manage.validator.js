@@ -26,6 +26,11 @@ const createRoomSchema = z.object({
   shareType: z.enum(['single', 'double', 'triple', 'four', 'dormitory']),
   totalBeds: z.number().int().min(1, 'Must have at least 1 bed').max(12),
   rentPerBed: z.number().min(0, 'Rent cannot be negative').optional(),
+  depositAmount: z.number().min(0, 'Deposit cannot be negative').optional(),
+  roomSize: z.string().max(100).optional(),
+  bathroomType: z.enum(['attached', 'common', 'shared']).optional(),
+  acIncluded: z.boolean().optional(),
+  furnitureIncluded: z.boolean().optional(),
   status: z.enum(['active', 'inactive', 'maintenance', 'renovation']).optional(),
   amenities: z.array(z.string()).optional(),
   notes: z.string().max(500).optional(),
@@ -44,7 +49,7 @@ const updateBedSchema = z.object({
 // Tenant validation schemas
 const addTenantSchema = z.object({
   name: z.string().min(2, 'Name required').max(100),
-  email: z.string().email('Invalid email').optional().nullable(),
+  email: z.string().email('Invalid email').optional().nullable().or(z.literal('')),
   phone: z.string().regex(/^[6-9]\d{9}$/, 'Invalid Indian mobile number'),
   gender: z.enum(['male', 'female', 'other']).optional(),
   dateOfBirth: z.string().optional().nullable(),
@@ -54,6 +59,24 @@ const addTenantSchema = z.object({
   depositStatus: z.enum(['pending', 'received', 'refunded', 'partial']).optional(),
   foodPreference: z.enum(['veg', 'nonveg', 'eggetarian', 'none']).optional(),
   notes: z.string().max(1000).optional(),
+  // Optional Bed / Room Assignment at creation
+  bedId: z.string().optional().nullable(),
+  bed: z.string().optional().nullable(),
+  roomId: z.string().optional().nullable(),
+  room: z.string().optional().nullable(),
+  buildingId: z.string().optional().nullable(),
+  building: z.string().optional().nullable(),
+  floorId: z.string().optional().nullable(),
+  floor: z.string().optional().nullable(),
+  // Emergency contact
+  emergencyContact: z.object({
+    name: z.string().optional(),
+    relationship: z.string().optional(),
+    relation: z.string().optional(),
+    phone: z.string().optional(),
+  }).optional(),
+  expectedLeaveDate: z.string().optional().nullable(),
+  noticePeriodDays: z.number().min(0).optional(),
 });
 
 const updateTenantSchema = addTenantSchema.partial();
@@ -77,19 +100,56 @@ const addStaffSchema = z.object({
 
 const updateStaffSchema = addStaffSchema.partial();
 
-// Rent validation schemas
+// Rent validation helpers
+const MONTH_MAP = {
+  january: 1, jan: 1,
+  february: 2, feb: 2,
+  march: 3, mar: 3,
+  april: 4, apr: 4,
+  may: 5,
+  june: 6, jun: 6,
+  july: 7, jul: 7,
+  august: 8, aug: 8,
+  september: 9, sep: 9, sept: 9,
+  october: 10, oct: 10,
+  november: 11, nov: 11,
+  december: 12, dec: 12,
+};
+
+const monthParser = z.preprocess((val) => {
+  if (typeof val === 'number') return val;
+  if (typeof val === 'string') {
+    const num = parseInt(val, 10);
+    if (!isNaN(num) && num >= 1 && num <= 12) return num;
+    const lower = val.trim().toLowerCase();
+    if (MONTH_MAP[lower]) return MONTH_MAP[lower];
+  }
+  return val;
+}, z.number().int().min(1).max(12));
+
 const generateRentSchema = z.object({
-  month: z.number().int().min(1).max(12),
-  year: z.number().int().min(2020),
-  dueDayOfMonth: z.number().int().min(1).max(28).optional(),
+  month: monthParser,
+  year: z.preprocess((val) => (typeof val === 'string' ? parseInt(val, 10) : val), z.number().int().min(2020)),
+  dueDayOfMonth: z.preprocess((val) => (typeof val === 'string' ? parseInt(val, 10) : val), z.number().int().min(1).max(28)).optional(),
 });
 
-const markRentPaidSchema = z.object({
-  amount: z.number().min(1, 'Amount required'),
+const markRentPaidSchema = z.preprocess((data) => {
+  if (typeof data === 'object' && data !== null) {
+    const rawAmount = data.amount !== undefined ? data.amount : data.amountPaid;
+    return {
+      amount: rawAmount !== undefined ? Number(rawAmount) : undefined,
+      method: data.method || data.paymentMethod || 'cash',
+      reference: data.reference || data.transactionRef || '',
+      notes: data.notes || data.remarks || '',
+    };
+  }
+  return data;
+}, z.object({
+  amount: z.number().min(1, 'Valid payment amount is required'),
   method: z.enum(['online', 'cash', 'upi', 'bank_transfer', 'cheque', 'other']).optional(),
   reference: z.string().optional(),
   notes: z.string().optional(),
-});
+}));
 
 // Expense validation schemas
 const addExpenseSchema = z.object({

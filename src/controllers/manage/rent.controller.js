@@ -9,6 +9,20 @@ const rentService = require('../../services/manage/rent.service');
 const receiptService = require('../../services/manage/receipt.service');
 const notificationTrigger = require('../../services/notification/notification.trigger');
 
+// ─── Month Parsing Helper ───────────────────────────────────────────────────
+const parseMonthNumber = (m) => {
+  if (!m) return null;
+  const num = parseInt(m, 10);
+  if (!isNaN(num) && num >= 1 && num <= 12) return num;
+  const MONTH_MAP = {
+    january: 1, jan: 1, february: 2, feb: 2, march: 3, mar: 3, april: 4, apr: 4,
+    may: 5, june: 6, jun: 6, july: 7, jul: 7, august: 8, aug: 8, september: 9,
+    sep: 9, sept: 9, october: 10, oct: 10, november: 11, nov: 11, december: 12, dec: 12,
+  };
+  const lower = String(m).trim().toLowerCase();
+  return MONTH_MAP[lower] || null;
+};
+
 // ─── Generate Monthly Rent ────────────────────────────────────────────────────
 exports.generateRent = asyncHandler(async (req, res) => {
   const { pgId }  = req.params;
@@ -17,10 +31,15 @@ exports.generateRent = asyncHandler(async (req, res) => {
   const pg = await PG.findOne({ _id: pgId, owner: ownerId });
   if (!pg) return errorResponse(res, 'PG not found or access denied', 404);
 
-  const { month, year, dueDayOfMonth } = req.body;
-  if (!month || !year) return errorResponse(res, 'month and year are required', 400);
+  const rawMonth = req.body.month;
+  const rawYear = req.body.year;
+  const month = parseMonthNumber(rawMonth);
+  const year = parseInt(rawYear, 10);
+  const dueDayOfMonth = parseInt(req.body.dueDayOfMonth, 10) || 5;
 
-  const result = await rentService.generateMonthlyRent(pgId, ownerId, month, year, dueDayOfMonth || 5);
+  if (!month || !year) return errorResponse(res, 'Valid month (1-12) and year are required', 400);
+
+  const result = await rentService.generateMonthlyRent(pgId, ownerId, month, year, dueDayOfMonth);
   // Notify tenants for each created rent record
   if (result.records && result.records.length > 0) {
     result.records.forEach(rec => notificationTrigger.onRentGenerated(rec).catch(() => {}));
@@ -42,14 +61,19 @@ exports.getRentRecords = asyncHandler(async (req, res) => {
 
   const filter = { pg: pgId, owner: ownerId };
   if (req.query.status) filter.status = req.query.status;
-  if (req.query.month)  filter.billingMonth = parseInt(req.query.month);
-  if (req.query.year)   filter.billingYear  = parseInt(req.query.year);
+
+  const filterMonth = parseMonthNumber(req.query.month);
+  if (filterMonth) filter.billingMonth = filterMonth;
+  if (req.query.year) {
+    const y = parseInt(req.query.year, 10);
+    if (!isNaN(y)) filter.billingYear = y;
+  }
 
   const [records, total] = await Promise.all([
     RentRecord.find(filter)
-      .populate('tenant', 'name phone email')
-      .populate('room',   'roomNumber')
-      .populate('bed',    'bedLabel')
+      .populate('tenant', 'name phone email monthlyRent joinDate')
+      .populate('room',   'roomNumber shareType')
+      .populate('bed',    'bedLabel status')
       .sort({ dueDate: -1 })
       .skip(skip)
       .limit(limit),
@@ -58,12 +82,18 @@ exports.getRentRecords = asyncHandler(async (req, res) => {
 
   const summary = await rentService.getRentSummary(
     pgId,
-    req.query.month  ? parseInt(req.query.month)  : null,
-    req.query.year   ? parseInt(req.query.year)   : null
+    filterMonth,
+    req.query.year ? parseInt(req.query.year, 10) : null
   );
 
-  return paginatedResponse(res, 'Rent records fetched', records, {
-    page, limit, total, pages: Math.ceil(total / limit), summary,
+  return res.status(200).json({
+    success: true,
+    message: 'Rent records fetched',
+    data: records,
+    summary,
+    pagination: {
+      page, limit, total, pages: Math.ceil(total / limit), summary,
+    },
   });
 });
 
@@ -83,7 +113,11 @@ exports.markRentPaid = asyncHandler(async (req, res) => {
   const record = await RentRecord.findOne({ _id: req.params.id, owner: req.user._id });
   if (!record) return errorResponse(res, 'Rent record not found or access denied', 404);
 
-  const { amount, method, reference, notes } = req.body;
+  const amount = Number(req.body.amount || req.body.amountPaid);
+  const method = req.body.method || req.body.paymentMethod || 'cash';
+  const reference = req.body.reference || req.body.transactionRef || '';
+  const notes = req.body.notes || req.body.remarks || '';
+
   if (!amount || amount <= 0) return errorResponse(res, 'Valid payment amount is required', 400);
 
   const updated = await rentService.recordPayment(record._id, amount, { method, reference, notes });

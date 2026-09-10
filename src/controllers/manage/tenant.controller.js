@@ -54,6 +54,8 @@ exports.getTenant = asyncHandler(async (req, res) => {
   return successResponse(res, 'Tenant fetched', tenant);
 });
 
+const { syncBuildingFloorStats } = require('./property.controller');
+
 // ─── Add Tenant ───────────────────────────────────────────────────────────────
 exports.addTenant = asyncHandler(async (req, res) => {
   const { pgId } = req.params;
@@ -76,13 +78,47 @@ exports.addTenant = asyncHandler(async (req, res) => {
     linkedUser = await User.findOne({ $or: matchConditions });
   }
 
+  // Check if bed is assigned at creation time
+  const targetBedId = req.body.bedId || req.body.bed;
+  let assignedBed = null;
+  if (targetBedId) {
+    const bed = await Bed.findOne({ _id: targetBedId, owner: ownerId });
+    if (bed) {
+      if (bed.status !== 'vacant') {
+        return errorResponse(res, `Selected bed is currently ${bed.status} and cannot be assigned`, 400);
+      }
+      assignedBed = bed;
+    }
+  }
+
   const tenant = await Tenant.create({
     pg: pgId,
     owner: ownerId,
     ...req.body,
     user:           linkedUser?._id || null,
     isLinkedToUser: !!linkedUser,
+    status:         assignedBed ? 'active' : (req.body.status || 'pending'),
+    bed:            assignedBed?._id || null,
+    room:           assignedBed?.room || req.body.roomId || req.body.room || null,
+    floor:          assignedBed?.floor || req.body.floorId || req.body.floor || null,
+    building:       assignedBed?.building || req.body.buildingId || req.body.building || null,
   });
+
+  if (assignedBed) {
+    assignedBed.status = 'occupied';
+    assignedBed.currentTenant = tenant._id;
+    await assignedBed.save();
+
+    await Room.findByIdAndUpdate(assignedBed.room, {
+      $inc: { occupiedBeds: 1, vacantBeds: -1 },
+    });
+
+    if (typeof syncBuildingFloorStats === 'function') {
+      await syncBuildingFloorStats(assignedBed.building, assignedBed.floor).catch(() => {});
+    }
+
+    notificationTrigger.onBedAssigned(tenant).catch(() => {});
+  }
 
   notificationTrigger.onTenantAdded(tenant, pg).catch(() => {});
   return successResponse(res, 'Tenant added successfully', tenant, 201);

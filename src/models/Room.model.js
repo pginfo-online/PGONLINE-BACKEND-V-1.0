@@ -70,6 +70,29 @@ const roomSchema = new mongoose.Schema(
     occupiedBeds:     { type: Number, default: 0, min: 0 },
     vacantBeds:       { type: Number, default: 0, min: 0 },
     maintenanceBeds:  { type: Number, default: 0, min: 0 },
+    depositAmount: {
+      type: Number,
+      min: [0, 'Deposit cannot be negative'],
+      default: 0,
+    },
+    roomSize: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+    bathroomType: {
+      type: String,
+      enum: ['attached', 'common', 'shared'],
+      default: 'attached',
+    },
+    acIncluded: {
+      type: Boolean,
+      default: false,
+    },
+    furnitureIncluded: {
+      type: Boolean,
+      default: true,
+    },
     notes: {
       type: String,
       trim: true,
