@@ -7,6 +7,7 @@ const otpService = require('../services/otp.service');
 const jwt = require('jsonwebtoken');
 const { deriveCapabilities, deriveAvailableModes } = require('../utils/capabilities');
 const { getMembershipSummary } = require('../utils/memberships');
+const appReview = require('../config/appReview.config');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Standard password-based auth
@@ -220,6 +221,16 @@ const sendOtpUnified = asyncHandler(async (req, res) => {
   const emailNorm = type === 'email' ? contact.toLowerCase().trim() : undefined;
   const phoneNorm = type === 'phone' ? contact.trim() : undefined;
 
+  // ─── TEMPORARY APP STORE REVIEW AUTHENTICATION [REMOVE AFTER REVIEW] ────────
+  if (type === 'phone' && appReview.isAppReviewContact(phoneNorm || contact)) {
+    return successResponse(
+      res,
+      'Verification OTP sent via SMS',
+      { channels: ['sms'] }
+    );
+  }
+  // ────────────────────────────────────────────────────────────────────────────
+
   const result = await otpService.createOtpUnified({
     email: emailNorm,
     phone: phoneNorm,
@@ -257,6 +268,57 @@ const verifyOtpUnified = asyncHandler(async (req, res) => {
   const isEmail = /\S+@\S+\.\S+/.test(contact);
   const emailNorm = isEmail ? contact.toLowerCase().trim() : undefined;
   const phoneNorm = !isEmail ? contact.trim() : undefined;
+
+  // ─── TEMPORARY APP STORE REVIEW AUTHENTICATION [REMOVE AFTER REVIEW] ────────
+  if (!isEmail && appReview.isAppReviewContact(phoneNorm || contact)) {
+    if (!appReview.isAppReviewOtpValid(otp)) {
+      throw Object.assign(
+        new Error('Invalid verification code. Please enter the correct review OTP.'),
+        { statusCode: 400 }
+      );
+    }
+
+    const User = require('../models/User.model');
+    const normalizedReviewPhone = appReview.normalizePhoneNumber(appReview.APP_REVIEW_PHONE);
+
+    let user = await User.findOne({ phone: normalizedReviewPhone });
+
+    const tokenExpiry = isMobile ? '90d' : (process.env.JWT_EXPIRES_IN || '7d');
+    const generateTokenWithExpiry = (userId) =>
+      jwt.sign({ id: userId }, process.env.JWT_SECRET, { expiresIn: tokenExpiry });
+
+    if (user) {
+      if (!user.isActive) {
+        throw Object.assign(
+          new Error('Your account has been suspended. Please contact support.'),
+          { statusCode: 403 }
+        );
+      }
+      user.lastLogin = new Date();
+      if (!user.phoneVerified) user.phoneVerified = true;
+      await user.save({ validateBeforeSave: false });
+
+      const token = generateTokenWithExpiry(user._id);
+      return successResponse(res, 'Login successful', {
+        isNewUser: false,
+        user: user.toSafeObject(),
+        token,
+      });
+    }
+
+    // New review user → auto-register as tenant
+    const result = await authService.registerUserViaOtp({
+      name: 'App Store Reviewer',
+      phone: normalizedReviewPhone,
+    });
+    const token = generateTokenWithExpiry(result.user._id || result.user.id);
+    return successResponse(res, 'Welcome to PGinfo! Account created.', {
+      isNewUser: true,
+      user: result.user,
+      token,
+    });
+  }
+  // ────────────────────────────────────────────────────────────────────────────
 
   // Verify OTP (throws on failure with attempt count in message)
   await otpService.verifyOtpUnified({ email: emailNorm, phone: phoneNorm, otp });
