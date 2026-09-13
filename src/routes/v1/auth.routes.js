@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const {
-  register, login, getMe, updateMe,
+  register, login, getMe, updateMe, deleteMe,
   sendOtp, verifyOtpRegister, verifyOtpLogin, sendOtpUnified, verifyOtpUnified, registerComplete
 } = require('../../controllers/auth.controller');
 const { protect } = require('../../middlewares/auth.middleware');
@@ -33,6 +33,7 @@ router.post('/register', validate(registerSchema), register);
 router.post('/login', loginLimiter, validate(loginSchema), login);
 router.get('/me', protect, getMe);
 router.put('/me', protect, validate(updateProfileSchema), updateMe);
+router.delete('/me', protect, deleteMe);
 
 
 // ... existing routes

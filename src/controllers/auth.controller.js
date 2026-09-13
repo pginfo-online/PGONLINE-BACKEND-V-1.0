@@ -139,6 +139,23 @@ const updateMe = asyncHandler(async (req, res) => {
   successResponse(res, 'Profile updated', { user });
 });
 
+/**
+ * @route  DELETE /api/v1/auth/me
+ * @access Private
+ * @desc   Delete account and all associated personal data (Apple App Store Guideline 5.1.1(v))
+ */
+const deleteMe = asyncHandler(async (req, res) => {
+  const User = require('../models/User.model');
+  const userId = req.user._id;
+
+  const deletedUser = await User.findByIdAndDelete(userId);
+  if (!deletedUser) {
+    throw Object.assign(new Error('User not found'), { statusCode: 404 });
+  }
+
+  successResponse(res, 'Account and associated personal data deleted successfully');
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Legacy email-only OTP routes (kept for backwards compatibility)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -426,6 +443,7 @@ module.exports = {
   login,
   getMe,
   updateMe,
+  deleteMe,
   sendOtp,
   verifyOtpRegister,
   verifyOtpLogin,
