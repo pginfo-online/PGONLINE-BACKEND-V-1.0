@@ -15,14 +15,19 @@ const notificationRoutes = require('./notification.routes');
 const cityRoutes = require('./city.routes');
 const buffetRoutes = require('./buffet.routes');
 const areaRoutes = require('./area.routes');
+const locationRoutes = require('./location.routes');
 const meetupCategoryRoutes = require('./meetupCategory.routes');
 const hotDealRoutes = require('./hotDeal.routes');
 const hotDealCategoryRoutes = require('./hotDealCategory.routes');
 
 
+const propertyRoutes = require('./property.routes');
+
+
 router.use('/auth', authRoutes);
 router.use('/pg/chat', chatbotRoutes);  // Added chatbot routes under /pg/chat
 router.use('/pg', pgRoutes);
+router.use('/properties', propertyRoutes);
 router.use('/lead', leadRoutes);
 router.use('/visit', visitRoutes);
 router.use('/admin', adminRoutes);
@@ -34,7 +39,9 @@ router.use('/notifications', notificationRoutes);
 router.use('/cities', cityRoutes);
 router.use('/buffet', buffetRoutes);
 router.use('/areas', areaRoutes);
+router.use('/location', locationRoutes);
 router.use('/meetup-categories', meetupCategoryRoutes);
+
 router.use('/hot-deals', hotDealRoutes);
 router.use('/hot-deal-categories', hotDealCategoryRoutes);
 

@@ -7,6 +7,9 @@ const excelService = require('./excel.service');
 const { cloudinary } = require('../config/cloudinary');
 const { logger } = require('../utils/logger');
 
+const WEEK_IN_MS = 7 * 24 * 60 * 60 * 1000;
+const RUN_LOCK_MS = 30 * 60 * 1000;
+
 /**
  * Executes a background scheduled export task
  * @param {Object} [options]
@@ -15,31 +18,56 @@ const { logger } = require('../utils/logger');
  */
 const executeScheduledExport = async (options = {}) => {
   const isManual = options.triggeredBy === 'manual_test';
-  logger.info(`[ExportScheduler] Starting daily export task (Trigger: ${isManual ? 'Manual' : 'Cron 9:00 AM IST'})...`);
+  logger.info(`[ExportScheduler] Starting weekly export task (Trigger: ${isManual ? 'Manual test' : 'Cron 9:00 AM IST'})...`);
 
-  const scheduleConfig = await ExportSchedule.getOrCreateSchedule();
+  let scheduleConfig = await ExportSchedule.getOrCreateSchedule();
   if (!scheduleConfig.isDaily9AMEnabled && !isManual) {
-    logger.info('[ExportScheduler] Daily 9:00 AM export is disabled in settings. Skipping.');
+    logger.info('[ExportScheduler] Weekly export is disabled in settings. Skipping.');
     return null;
   }
+
+  const now = new Date();
+  const cutoff = new Date(now.getTime() - WEEK_IN_MS);
+  const claimFilter = {
+    _id: scheduleConfig._id,
+    $and: [
+      { $or: [{ runLockUntil: null }, { runLockUntil: { $lte: now } }] },
+      ...(isManual ? [] : [{ $or: [{ lastCompletedAt: null }, { lastCompletedAt: { $lte: cutoff } }] }]),
+    ],
+  };
+  const claimedSchedule = await ExportSchedule.findOneAndUpdate(
+    claimFilter,
+    { $set: { runLockUntil: new Date(now.getTime() + RUN_LOCK_MS), lastRunAt: now, lastRunStatus: 'running' } },
+    { new: true }
+  );
+  if (!claimedSchedule) {
+    logger.info('[ExportScheduler] Weekly export is already running or the 7-day interval has not elapsed. Skipping.');
+    return null;
+  }
+  scheduleConfig = claimedSchedule;
 
   const dataset = scheduleConfig.dataset || 'pgs';
   const query = excelService.parseExportFilters({ dataset, ...(scheduleConfig.filters || {}) });
 
   // Update schedule status to running
-  scheduleConfig.lastRunStatus = 'running';
-  scheduleConfig.lastRunAt = new Date();
-  await scheduleConfig.save();
-
   // Create tracking job in DB
-  const job = await ExportJob.create({
-    admin: options.user?._id || scheduleConfig.updatedBy || null,
-    jobType: isManual ? 'manual_background' : 'daily_9am_schedule',
-    dataset,
-    status: 'processing',
-    progress: 0,
-    filters: scheduleConfig.filters || {},
-  });
+  let job;
+  try {
+    job = await ExportJob.create({
+      admin: options.user?._id || scheduleConfig.updatedBy || null,
+      jobType: isManual ? 'manual_background' : 'daily_9am_schedule',
+      dataset,
+      status: 'processing',
+      progress: 0,
+      filters: scheduleConfig.filters || {},
+    });
+  } catch (error) {
+    scheduleConfig.runLockUntil = null;
+    scheduleConfig.lastRunStatus = 'failed';
+    scheduleConfig.lastRunError = error.message;
+    await scheduleConfig.save();
+    throw error;
+  }
 
   const tempDir = path.join(__dirname, '../../uploads/exports');
   if (!fs.existsSync(tempDir)) {
@@ -99,10 +127,12 @@ const executeScheduledExport = async (options = {}) => {
     // Update schedule config state
     scheduleConfig.lastRunStatus = 'completed';
     scheduleConfig.lastJobId = job._id;
+    scheduleConfig.lastCompletedAt = new Date();
+    scheduleConfig.runLockUntil = null;
     scheduleConfig.lastRunError = null;
     await scheduleConfig.save();
 
-    logger.info(`[ExportScheduler] ✓ Daily export completed successfully! File: ${uploadResult.secure_url}`);
+    logger.info(`[ExportScheduler] ✓ Weekly export completed successfully! File: ${uploadResult.secure_url}`);
     return { job, fileUrl: uploadResult.secure_url };
   } catch (err) {
     logger.error(`[ExportScheduler] ✗ Daily export failed: ${err.message}`);
@@ -114,6 +144,7 @@ const executeScheduledExport = async (options = {}) => {
 
     scheduleConfig.lastRunStatus = 'failed';
     scheduleConfig.lastRunError = err.message;
+    scheduleConfig.runLockUntil = null;
     await scheduleConfig.save();
     throw err;
   } finally {
@@ -131,7 +162,7 @@ const executeScheduledExport = async (options = {}) => {
  * Initializes cron schedule on server startup
  */
 const startExportScheduler = () => {
-  logger.info('[ExportScheduler] Initializing Daily 9:00 AM IST Auto-Export Cron...');
+  logger.info('[ExportScheduler] Initializing Weekly 9:00 AM IST Auto-Export Cron...');
 
   // '0 9 * * *' = 9:00 AM every day
   cron.schedule(
@@ -148,7 +179,7 @@ const startExportScheduler = () => {
     }
   );
 
-  logger.info('[ExportScheduler] Daily 9:00 AM IST Auto-Export registered ✓');
+  logger.info('[ExportScheduler] Weekly 9:00 AM IST Auto-Export registered ✓');
 };
 
 module.exports = {

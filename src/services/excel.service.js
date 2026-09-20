@@ -5,6 +5,8 @@ const Lead = require('../models/Lead.model');
 const RentRecord = require('../models/RentRecord.model');
 const Tenant = require('../models/Tenant.model');
 
+const escapeRegex = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 // ─── Filter Parsing ────────────────────────────────────────────────────────────
 
 const parseExportFilters = (params = {}) => {
@@ -16,10 +18,10 @@ const parseExportFilters = (params = {}) => {
     if (cleanStatus && cleanStatus !== 'all') query.status = cleanStatus;
 
     const cleanCity = typeof params.city === 'string' ? params.city.trim() : '';
-    if (cleanCity) query.city = new RegExp(cleanCity, 'i');
+    if (cleanCity) query.city = new RegExp(escapeRegex(cleanCity), 'i');
 
     const cleanArea = typeof params.area === 'string' ? params.area.trim() : '';
-    if (cleanArea) query.area = new RegExp(cleanArea, 'i');
+    if (cleanArea) query.area = new RegExp(escapeRegex(cleanArea), 'i');
 
     if (params.isVerified === 'true' || params.isVerified === true) query.isVerified = true;
     else if (params.isVerified === 'false' || params.isVerified === false) query.isVerified = false;
@@ -47,7 +49,7 @@ const parseExportFilters = (params = {}) => {
     if (params.startDate) query.createdAt.$gte = new Date(params.startDate);
     if (params.endDate) {
       const end = new Date(params.endDate);
-      end.setHours(23, 59, 59, 999);
+      end.setUTCHours(23, 59, 59, 999);
       query.createdAt.$lte = end;
     }
   }

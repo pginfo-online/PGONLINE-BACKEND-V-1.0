@@ -15,8 +15,8 @@ const adminNotifCtrl = require('../../controllers/admin.notification.controller'
 router.use(protect, authorize('admin'));
 
 // Export PG Listings & Datasets
-router.get('/pgs/export', directExportPGs);
-router.post('/pgs/export/job', initiateExportJob);
+router.get('/pgs/export', validate(exportQuerySchema, 'query'), directExportPGs);
+router.post('/pgs/export/job', validate(initiateJobSchema), initiateExportJob);
 router.get('/pgs/export/jobs', getExportJobs);
 router.get('/pgs/export/jobs/:id', getExportJobStatus);
 router.delete('/pgs/export/jobs/:id', deleteExportJob);
@@ -32,6 +32,20 @@ router.put('/pgs/:id/approve', approvePG);
 router.put('/pgs/:id/reject', rejectPG);
 router.put('/pgs/:id/verify', toggleVerify);
 router.delete('/pgs/:id', removePG);
+
+// Universal Property Management & Approvals
+const propertyCtrl = require('../../controllers/property.controller');
+const propUpdateCtrl = require('../../controllers/propertyUpdateRequest.controller');
+router.get('/properties', propertyCtrl.getAdminProperties);
+router.put('/properties/:id/approve', propertyCtrl.approveProperty);
+router.put('/properties/:id/reject', propertyCtrl.rejectProperty);
+router.put('/properties/:id/request-correction', propertyCtrl.requestCorrection);
+router.put('/properties/:id/verify', propertyCtrl.toggleVerify);
+router.put('/properties/:id/suspend', propertyCtrl.suspendProperty);
+router.get('/property-updates', propUpdateCtrl.getAllUpdateRequests);
+router.get('/property-updates/:id', propUpdateCtrl.getUpdateRequestById);
+router.put('/property-updates/:id/approve', propUpdateCtrl.approveUpdateRequest);
+router.put('/property-updates/:id/reject', propUpdateCtrl.rejectUpdateRequest);
 
 router.get('/users', getAllUsers);
 router.post('/users', validate(createOwnerSchema), createOwner);

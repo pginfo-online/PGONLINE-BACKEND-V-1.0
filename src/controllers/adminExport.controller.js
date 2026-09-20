@@ -216,29 +216,35 @@ const deleteExportJob = asyncHandler(async (req, res) => {
 
 /**
  * @route GET /api/v1/admin/pgs/export/schedule
- * @desc  Get the persistent 9:00 AM server-side schedule config & status
+ * @desc  Get the persistent weekly 9:00 AM server-side schedule config & status
  */
 const getExportScheduleConfig = asyncHandler(async (req, res) => {
   const schedule = await ExportSchedule.getOrCreateSchedule();
 
-  // Compute next 9:00 AM IST execution timestamp
+  // Compute the next eligible weekly run at 9:00 AM IST.
   const now = new Date();
-  const nextRun = new Date(now);
+  const weekInMs = 7 * 24 * 60 * 60 * 1000;
+  let nextRun = schedule.lastCompletedAt
+    ? new Date(schedule.lastCompletedAt.getTime() + weekInMs)
+    : new Date(now);
   // Convert to IST offset (+5:30)
   const istOffset = 5.5 * 60 * 60 * 1000;
   const istNow = new Date(now.getTime() + istOffset);
 
   const next9AM_IST = new Date(istNow);
-  next9AM_IST.setUTCHours(3, 30, 0, 0); // 09:00 AM IST = 03:30 AM UTC
+  next9AM_IST.setUTCHours(3, 30, 0, 0);
 
-  if (now >= next9AM_IST) {
+  if (!schedule.lastCompletedAt && now >= next9AM_IST) {
     next9AM_IST.setUTCDate(next9AM_IST.getUTCDate() + 1);
   }
+
+  if (!schedule.lastCompletedAt) nextRun = next9AM_IST;
+  else if (nextRun < now) nextRun = next9AM_IST > now ? next9AM_IST : new Date(next9AM_IST.getTime() + 24 * 60 * 60 * 1000);
 
   return successResponse(res, 'Export schedule retrieved successfully', {
     schedule: {
       ...schedule.toObject(),
-      computedNextRunAt: next9AM_IST,
+      computedNextRunAt: nextRun,
     },
   });
 });

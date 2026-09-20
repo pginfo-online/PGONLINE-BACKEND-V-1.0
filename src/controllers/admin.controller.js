@@ -1,6 +1,7 @@
 const asyncHandler = require('../utils/asyncHandler');
 const { successResponse, paginatedResponse } = require('../utils/apiResponse');
 const PG = require('../models/PG.model');
+const Property = require('../models/Property.model');
 const User = require('../models/User.model');
 const Lead = require('../models/Lead.model');
 const VisitRequest = require('../models/VisitRequest.model');
@@ -237,11 +238,11 @@ const getAnalytics = asyncHandler(async (req, res) => {
     totalUsers, totalTenants, totalOwners,
     totalLeads, totalVisits,
   ] = await Promise.all([
-    PG.countDocuments(),
-    PG.countDocuments({ status: 'approved' }),
-    PG.countDocuments({ status: 'pending' }),
-    PG.countDocuments({ status: 'rejected' }),
-    PG.countDocuments({ isVerified: true }),
+    Property.countDocuments(),
+    Property.countDocuments({ status: 'approved' }),
+    Property.countDocuments({ status: { $in: ['pending', 'submitted', 'pending_review'] } }),
+    Property.countDocuments({ status: 'rejected' }),
+    Property.countDocuments({ isVerified: true }),
     User.countDocuments({ role: { $ne: 'admin' } }),
     User.countDocuments({ role: 'tenant' }),
     User.countDocuments({ role: 'owner' }),
@@ -249,10 +250,37 @@ const getAnalytics = asyncHandler(async (req, res) => {
     VisitRequest.countDocuments(),
   ]);
 
-  // City-wise distribution
-  const cityStats = await PG.aggregate([
-    { $match: { status: 'approved' } },
-    { $group: { _id: '$city', count: { $sum: 1 } } },
+  const cityStats = await Property.aggregate([
+    { $match: { status: 'approved', city: { $type: 'string' } } },
+    {
+      $lookup: {
+        from: 'cities',
+        localField: 'cityId',
+        foreignField: '_id',
+        as: 'cityRecord',
+      },
+    },
+    {
+      $project: {
+        cityName: {
+          $ifNull: [
+            { $arrayElemAt: ['$cityRecord.name', 0] },
+            { $trim: { input: '$city' } },
+          ],
+        },
+      },
+    },
+    { $set: { cityKey: { $toLower: '$cityName' } } },
+    { $match: { cityKey: { $ne: '' } } },
+    {
+      $group: {
+        _id: '$cityKey',
+        cityName: { $first: '$cityName' },
+        count: { $sum: 1 },
+      },
+    },
+    { $sort: { count: -1, cityName: 1 } },
+    { $project: { _id: '$cityName', count: 1 } },
   ]);
 
   successResponse(res, 'Analytics retrieved', {

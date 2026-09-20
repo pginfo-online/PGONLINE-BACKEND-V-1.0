@@ -8,7 +8,7 @@ const exportScheduleSchema = new mongoose.Schema(
     },
     cronExpression: {
       type: String,
-      default: '0 9 * * *', // Daily at 9:00 AM IST
+      default: '0 9 * * *', // Checked daily; execution is gated to a 7-day interval
     },
     timezone: {
       type: String,
@@ -24,6 +24,14 @@ const exportScheduleSchema = new mongoose.Schema(
       default: { status: 'approved' },
     },
     lastRunAt: {
+      type: Date,
+      default: null,
+    },
+    lastCompletedAt: {
+      type: Date,
+      default: null,
+    },
+    runLockUntil: {
       type: Date,
       default: null,
     },

@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const {
   getCities,
+  searchCities,
   getAllCitiesAdmin,
   createCity,
   updateCity,
@@ -15,7 +16,10 @@ const upload = require('../../middlewares/upload.middleware');
 // GET /api/v1/cities — mobile city selector, returns active cities only
 router.get('/', getCities);
 
-// ─── Admin ────────────────────────────────────────────────────────────────────
+// GET /api/v1/cities/search — fuzzy search by name + alias (CityAutocomplete)
+router.get('/search', searchCities);
+
+
 // GET /api/v1/cities/admin — all cities including inactive (admin panel)
 router.get('/admin', protect, authorize('admin'), getAllCitiesAdmin);
 

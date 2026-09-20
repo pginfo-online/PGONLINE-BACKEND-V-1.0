@@ -41,10 +41,44 @@ const deleteCityImageSafe = async (publicId) => {
 const getCities = asyncHandler(async (req, res) => {
   const cities = await City.find({ isActive: true })
     .sort({ order: 1, name: 1 })
-    .select('name slug image state description order')
+    .select('name slug image state country description order aliases')
     .lean();
 
   successResponse(res, 'Cities retrieved', { cities });
+});
+
+/**
+ * @route  GET /api/v1/cities/search?q=<text>&state=<state>&country=<country>
+ * @desc   Fuzzy-search active cities by name or alias — used by CityAutocomplete
+ *         and location resolve flow. Returns up to 20 matches.
+ * @access Public
+ */
+const searchCities = asyncHandler(async (req, res) => {
+  const { q, state, country } = req.query;
+
+  const filter = { isActive: true };
+
+  if (q && q.trim().length > 0) {
+    const escaped = q.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(escaped, 'i');
+    filter.$or = [{ name: regex }, { aliases: regex }];
+  }
+
+  if (state && state.trim()) {
+    filter.state = { $regex: new RegExp(state.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') };
+  }
+
+  if (country && country.trim()) {
+    filter.country = { $regex: new RegExp(country.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') };
+  }
+
+  const cities = await City.find(filter)
+    .sort({ order: 1, name: 1 })
+    .select('name slug image state country description order aliases')
+    .limit(20)
+    .lean();
+
+  successResponse(res, 'City search results', { cities });
 });
 
 // ─── Admin Controllers ────────────────────────────────────────────────────────
@@ -183,9 +217,11 @@ const toggleCityStatus = asyncHandler(async (req, res) => {
 
 module.exports = {
   getCities,
+  searchCities,
   getAllCitiesAdmin,
   createCity,
   updateCity,
   deleteCity,
   toggleCityStatus,
 };
+

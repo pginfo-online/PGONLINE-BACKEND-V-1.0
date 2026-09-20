@@ -12,6 +12,8 @@
     "pm2:stop": "pm2 stop ecosystem.config.cjs",
     "pm2:reload": "pm2 reload ecosystem.config.cjs --env production",
     "pm2:logs": "pm2 logs pginfo-backend",
+    "backfill:property-cities": "node src/scripts/backfillPropertyCityIds.js",
+    "backfill:property-cities:apply": "node src/scripts/backfillPropertyCityIds.js --apply",
     "seed": "node src/scripts/seed.js"
   },
   "dependencies": {
