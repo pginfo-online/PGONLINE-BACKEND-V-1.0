@@ -71,7 +71,7 @@ const commercialDetailsSchema = new mongoose.Schema(
 
     // Space & Dimensions
     carpetAreaSqFt: { type: Number, min: 10, required: true },
-    superBuiltUpAreaSqFt: { type: Number, min: 10 },
+    superBuiltUpAreaSqFt: { type: Number, min: 0 },
     plotAreaSqFt: { type: Number, min: 0 },
     ceilingHeightFt: { type: Number, min: 0 },
     entranceWidthFt: { type: Number, min: 0 },

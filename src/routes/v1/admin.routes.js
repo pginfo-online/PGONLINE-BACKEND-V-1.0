@@ -46,6 +46,7 @@ router.get('/property-updates', propUpdateCtrl.getAllUpdateRequests);
 router.get('/property-updates/:id', propUpdateCtrl.getUpdateRequestById);
 router.put('/property-updates/:id/approve', propUpdateCtrl.approveUpdateRequest);
 router.put('/property-updates/:id/reject', propUpdateCtrl.rejectUpdateRequest);
+router.put('/property-updates/:id/correction', propUpdateCtrl.requestCorrection);
 
 router.get('/users', getAllUsers);
 router.post('/users', validate(createOwnerSchema), createOwner);
@@ -61,12 +62,18 @@ router.delete('/users/:id/roles/:role', removeUserRole);
 
 router.get('/analytics', getAnalytics);
 
-// PG Update Requests
-router.get('/pg-updates', getAllUpdateRequests);
-router.get('/pg-updates/:id', getUpdateRequestById);
-router.put('/pg-updates/:id/approve', approveUpdateRequest);
-router.put('/pg-updates/:id/reject', rejectUpdateRequest);
-router.put('/pg-updates/:id/correction', requestCorrection);
+// Unified Property / PG Update Requests (supporting both /pg-updates and /property-updates)
+router.get('/pg-updates', propUpdateCtrl.getAllUpdateRequests);
+router.get('/pg-updates/:id', propUpdateCtrl.getUpdateRequestById);
+router.put('/pg-updates/:id/approve', propUpdateCtrl.approveUpdateRequest);
+router.put('/pg-updates/:id/reject', propUpdateCtrl.rejectUpdateRequest);
+router.put('/pg-updates/:id/correction', propUpdateCtrl.requestCorrection);
+
+router.get('/property-updates', propUpdateCtrl.getAllUpdateRequests);
+router.get('/property-updates/:id', propUpdateCtrl.getUpdateRequestById);
+router.put('/property-updates/:id/approve', propUpdateCtrl.approveUpdateRequest);
+router.put('/property-updates/:id/reject', propUpdateCtrl.rejectUpdateRequest);
+router.put('/property-updates/:id/correction', propUpdateCtrl.requestCorrection);
 
 // Meetups
 router.get('/meetups/kpis', adminGetKPIs);

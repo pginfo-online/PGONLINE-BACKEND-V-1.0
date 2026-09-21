@@ -125,6 +125,18 @@ const approveUpdateRequest = async (requestId, adminId) => {
     throw err;
   }
 
+  if (updatedProperty.category === 'pg') {
+    try {
+      const PG = require('../models/PG.model');
+      const pgSet = { ...changes };
+      if (changes.pgDetails?.food) pgSet.food = changes.pgDetails.food;
+      if (changes.pgDetails?.foodIncluded !== undefined) pgSet.foodIncluded = changes.pgDetails.foodIncluded;
+      if (changes.pgDetails?.foodInfo) pgSet.foodInfo = changes.pgDetails.foodInfo;
+      if (changes.pgDetails?.roomConfigs) pgSet.roomConfigs = changes.pgDetails.roomConfigs;
+      await PG.findByIdAndUpdate(request.property, { $set: pgSet });
+    } catch (e) {}
+  }
+
   // Mark request approved
   request.status = 'approved';
   request.reviewedAt = new Date();
@@ -201,10 +213,43 @@ const cancelUpdateRequest = async (requestId, ownerId) => {
   return request;
 };
 
+/**
+ * Request correction on property update request
+ */
+const requestCorrection = async (requestId, adminId, comment) => {
+  const request = await PropertyUpdateRequest.findById(requestId);
+  if (!request) {
+    const err = new Error('Update request not found');
+    err.statusCode = 404;
+    throw err;
+  }
+
+  if (request.status !== 'pending' && request.status !== 'correction_required') {
+    const err = new Error(`Request is already in status: ${request.status}`);
+    err.statusCode = 400;
+    throw err;
+  }
+
+  request.status = 'correction_required';
+  request.adminComment = comment || 'Please make the requested corrections to your update';
+  request.reviewedAt = new Date();
+  request.reviewedBy = adminId;
+  request.auditLog.push({
+    action: 'correction_required',
+    by: adminId,
+    at: new Date(),
+    comment: request.adminComment,
+  });
+
+  await request.save();
+  return request;
+};
+
 module.exports = {
   getAllUpdateRequests,
   getUpdateRequestById,
   approveUpdateRequest,
   rejectUpdateRequest,
+  requestCorrection,
   cancelUpdateRequest,
 };

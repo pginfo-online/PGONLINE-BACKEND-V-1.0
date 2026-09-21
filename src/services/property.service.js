@@ -1,5 +1,6 @@
 const Property = require('../models/Property.model');
 const PropertyUpdateRequest = require('../models/PropertyUpdateRequest.model');
+const PG = require('../models/PG.model');
 const User = require('../models/User.model');
 const City = require('../models/City.model');
 
@@ -33,7 +34,157 @@ const computeDataQualityScore = (data) => {
   return Math.min(5, score);
 };
 
-const removeInactiveCategoryDetails = (data, category) => {
+const cleanNumber = (val) => {
+  if (val === '' || val === null || val === undefined) return undefined;
+  const num = Number(val);
+  return isNaN(num) ? undefined : num;
+};
+
+const sanitizePropertyPayload = (data) => {
+  if (!data || typeof data !== 'object') return;
+
+  // Clean pricing numbers
+  if (data.pricing) {
+    if (data.pricing.expectedPrice !== undefined) data.pricing.expectedPrice = cleanNumber(data.pricing.expectedPrice) ?? 0;
+    if (data.pricing.pricePerSqFt !== undefined) data.pricing.pricePerSqFt = cleanNumber(data.pricing.pricePerSqFt);
+    if (data.pricing.securityDeposit !== undefined) data.pricing.securityDeposit = cleanNumber(data.pricing.securityDeposit) ?? 0;
+    if (data.pricing.depositMonths !== undefined) data.pricing.depositMonths = cleanNumber(data.pricing.depositMonths);
+    if (data.pricing.maintenanceCharges !== undefined) data.pricing.maintenanceCharges = cleanNumber(data.pricing.maintenanceCharges) ?? 0;
+    if (data.pricing.bookingAmount !== undefined) data.pricing.bookingAmount = cleanNumber(data.pricing.bookingAmount);
+    if (data.pricing.camChargesPerSqFt !== undefined) data.pricing.camChargesPerSqFt = cleanNumber(data.pricing.camChargesPerSqFt);
+    if (data.pricing.dgBackupCharges !== undefined) data.pricing.dgBackupCharges = cleanNumber(data.pricing.dgBackupCharges);
+  }
+
+  // Clean residential numbers
+  if (data.residentialDetails) {
+    const rd = data.residentialDetails;
+    rd.bedrooms = cleanNumber(rd.bedrooms) ?? 1;
+    rd.bathrooms = cleanNumber(rd.bathrooms) ?? 1;
+    rd.balconies = cleanNumber(rd.balconies) ?? 0;
+    rd.carpetAreaSqFt = cleanNumber(rd.carpetAreaSqFt) ?? 0;
+    rd.builtUpAreaSqFt = cleanNumber(rd.builtUpAreaSqFt);
+    rd.superBuiltUpAreaSqFt = cleanNumber(rd.superBuiltUpAreaSqFt);
+    rd.plotAreaSqYards = cleanNumber(rd.plotAreaSqYards);
+    rd.floorNumber = cleanNumber(rd.floorNumber ?? rd.floorNo);
+    rd.floorNo = cleanNumber(rd.floorNo ?? rd.floorNumber);
+    rd.totalFloors = cleanNumber(rd.totalFloors);
+    rd.propertyAgeYears = cleanNumber(rd.propertyAgeYears ?? rd.propertyAge);
+    rd.propertyAge = cleanNumber(rd.propertyAge ?? rd.propertyAgeYears);
+    rd.reservedCoveredParking = cleanNumber(rd.reservedCoveredParking) ?? 0;
+    rd.openParking = cleanNumber(rd.openParking) ?? 0;
+    rd.lockInPeriodMonths = cleanNumber(rd.lockInPeriodMonths) ?? 0;
+    rd.noticePeriodDays = cleanNumber(rd.noticePeriodDays) ?? 30;
+
+    if (rd.furnishingDetails) {
+      const fd = rd.furnishingDetails;
+      fd.fans = cleanNumber(fd.fans) ?? 0;
+      fd.lights = cleanNumber(fd.lights) ?? 0;
+      fd.wardrobes = cleanNumber(fd.wardrobes) ?? 0;
+      fd.geysers = cleanNumber(fd.geysers) ?? 0;
+      fd.acCount = cleanNumber(fd.acCount) ?? 0;
+      fd.bedsCount = cleanNumber(fd.bedsCount) ?? 0;
+    }
+  }
+
+  // Clean commercial numbers
+  if (data.commercialDetails) {
+    const cd = data.commercialDetails;
+    cd.carpetAreaSqFt = cleanNumber(cd.carpetAreaSqFt) ?? 0;
+    cd.superBuiltUpAreaSqFt = cleanNumber(cd.superBuiltUpAreaSqFt);
+    cd.plotAreaSqFt = cleanNumber(cd.plotAreaSqFt);
+    cd.ceilingHeightFt = cleanNumber(cd.ceilingHeightFt ?? cd.floorToCeilingHeightFt);
+    cd.floorToCeilingHeightFt = cleanNumber(cd.floorToCeilingHeightFt ?? cd.ceilingHeightFt);
+    cd.entranceWidthFt = cleanNumber(cd.entranceWidthFt);
+    cd.floorNumber = cleanNumber(cd.floorNumber ?? cd.floorNo);
+    cd.floorNo = cleanNumber(cd.floorNo ?? cd.floorNumber);
+    cd.totalFloors = cleanNumber(cd.totalFloors);
+    cd.passengerLifts = cleanNumber(cd.passengerLifts) ?? 0;
+    cd.goodsLifts = cleanNumber(cd.goodsLifts ?? cd.serviceLifts) ?? 0;
+    cd.serviceLifts = cleanNumber(cd.serviceLifts ?? cd.goodsLifts) ?? 0;
+    cd.loadingDocks = cleanNumber(cd.loadingDocks) ?? 0;
+    cd.powerLoadKW = cleanNumber(cd.powerLoadKW);
+    cd.powerBackupCapacityKVA = cleanNumber(cd.powerBackupCapacityKVA);
+    cd.floorLoadCapacityTonsPerSqM = cleanNumber(cd.floorLoadCapacityTonsPerSqM);
+    cd.coveredParkingSlots = cleanNumber(cd.coveredParkingSlots ?? cd.reservedParkingSlots) ?? 0;
+    cd.reservedParkingSlots = cleanNumber(cd.reservedParkingSlots ?? cd.coveredParkingSlots) ?? 0;
+    cd.openParkingSlots = cleanNumber(cd.openParkingSlots ?? cd.visitorParkingSlots) ?? 0;
+    cd.visitorParkingSlots = cleanNumber(cd.visitorParkingSlots ?? cd.openParkingSlots) ?? 0;
+    cd.parkingRatioPer1000SqFt = cleanNumber(cd.parkingRatioPer1000SqFt);
+
+    if (cd.fitoutDetails) {
+      const fit = cd.fitoutDetails;
+      fit.workstationsCount = cleanNumber(fit.workstationsCount) ?? 0;
+      fit.cabinsCount = cleanNumber(fit.cabinsCount) ?? 0;
+      fit.meetingRoomsCount = cleanNumber(fit.meetingRoomsCount) ?? 0;
+      fit.conferenceRoomsCount = cleanNumber(fit.conferenceRoomsCount) ?? 0;
+      fit.privateWashrooms = cleanNumber(fit.privateWashrooms) ?? 0;
+      fit.publicWashroomsPerFloor = cleanNumber(fit.publicWashroomsPerFloor) ?? 0;
+    }
+
+    if (cd.leaseTerms) {
+      const lt = cd.leaseTerms;
+      lt.minLeasePeriodMonths = cleanNumber(lt.minLeasePeriodMonths);
+      lt.leaseDurationYears = cleanNumber(lt.leaseDurationYears) ?? 3;
+      lt.lockInPeriodMonths = cleanNumber(lt.lockInPeriodMonths) ?? 12;
+      lt.fitOutPeriodDays = cleanNumber(lt.fitOutPeriodDays) ?? 0;
+      lt.annualRentEscalationPercent = cleanNumber(lt.annualRentEscalationPercent) ?? 5;
+      lt.noticePeriodDays = cleanNumber(lt.noticePeriodDays);
+    }
+  }
+
+  // Clean PG numbers
+  if (data.pgDetails) {
+    const pg = data.pgDetails;
+    pg.floors = cleanNumber(pg.floors);
+    pg.totalRooms = cleanNumber(pg.totalRooms);
+    pg.propertyAge = cleanNumber(pg.propertyAge);
+    pg.noticePeriod = cleanNumber(pg.noticePeriod);
+    pg.minStay = cleanNumber(pg.minStay);
+    pg.maxStay = cleanNumber(pg.maxStay);
+    pg.availableRooms = cleanNumber(pg.availableRooms) ?? 0;
+
+    const hasFood = (pg.food && pg.food !== 'none') || pg.foodInfo?.provided === true;
+    const foodType = (pg.food && pg.food !== 'none')
+      ? pg.food
+      : (pg.foodInfo?.type && pg.foodInfo.type !== 'none')
+        ? pg.foodInfo.type
+        : (hasFood ? 'both' : 'none');
+
+    const foodInc = hasFood ? (pg.foodIncluded ?? pg.foodInfo?.includedInRent ?? false) : false;
+    const foodCost = (hasFood && !foodInc)
+      ? (cleanNumber(pg.foodInfo?.mealCostPerMonth ?? pg.foodInfo?.monthlyFoodCharge) ?? 0)
+      : 0;
+
+    pg.food = hasFood ? foodType : 'none';
+    pg.foodIncluded = foodInc;
+    if (pg.foodInfo || hasFood) {
+      pg.foodInfo = pg.foodInfo || {};
+      pg.foodInfo.provided = hasFood;
+      pg.foodInfo.type = hasFood ? foodType : 'veg';
+      pg.foodInfo.includedInRent = foodInc;
+      pg.foodInfo.mealCostPerMonth = foodCost;
+      pg.foodInfo.monthlyFoodCharge = foodCost;
+      pg.foodInfo.mealsPerDay = cleanNumber(pg.foodInfo.mealsPerDay) || 2;
+      const kAccess = pg.foodInfo.kitchenAccess ?? pg.foodInfo.kitchenAccessForTenants ?? false;
+      pg.foodInfo.kitchenAccess = kAccess;
+      pg.foodInfo.kitchenAccessForTenants = kAccess;
+    }
+
+    if (Array.isArray(pg.roomConfigs)) {
+      pg.roomConfigs.forEach((rc) => {
+        rc.sharing = cleanNumber(rc.sharing);
+        rc.rent = cleanNumber(rc.rent ?? rc.monthlyRent) ?? 0;
+        rc.monthlyRent = cleanNumber(rc.monthlyRent ?? rc.rent) ?? 0;
+        rc.deposit = cleanNumber(rc.deposit ?? rc.depositAmount);
+        rc.depositAmount = cleanNumber(rc.depositAmount ?? rc.deposit);
+        rc.totalBeds = cleanNumber(rc.totalBeds) ?? 0;
+        rc.availableBeds = cleanNumber(rc.availableBeds) ?? 0;
+      });
+    }
+  }
+};
+
+const removeInactiveCategoryDetails = (data, category, purpose) => {
   if (category === 'pg') {
     delete data.residentialDetails;
     delete data.commercialDetails;
@@ -43,6 +194,13 @@ const removeInactiveCategoryDetails = (data, category) => {
   } else if (category === 'commercial') {
     delete data.pgDetails;
     delete data.residentialDetails;
+    if (data.commercialDetails) {
+      if (purpose === 'sale') {
+        delete data.commercialDetails.leaseTerms;
+      } else if (purpose === 'rent') {
+        delete data.commercialDetails.saleTerms;
+      }
+    }
   }
 };
 
@@ -168,6 +326,8 @@ const createProperty = async (ownerId, data) => {
   const finalLng = locationData.longitude || data.longitude;
   const nearbyPlaces = Array.isArray(data.nearbyPlaces) ? data.nearbyPlaces : [];
 
+  sanitizePropertyPayload(data);
+
   // 3. Assemble payload
   const propertyPayload = {
     ...data,
@@ -184,16 +344,78 @@ const createProperty = async (ownerId, data) => {
   };
 
   await canonicalizePropertyCity(propertyPayload);
-  removeInactiveCategoryDetails(propertyPayload, category);
+  removeInactiveCategoryDetails(propertyPayload, category, purpose);
 
-  // Remove legacy virtual fields if passed
-  delete propertyPayload.rent;
-  delete propertyPayload.minRent;
-  delete propertyPayload.maxRent;
-  delete propertyPayload.totalBeds;
-  delete propertyPayload.availableBeds;
+  // Ensure at least one photo is marked isMain
+  if (Array.isArray(propertyPayload.photos) && propertyPayload.photos.length > 0) {
+    if (!propertyPayload.photos.some((p) => p.isMain)) {
+      propertyPayload.photos[0].isMain = true;
+    }
+  }
+
+  // Derive min rent from roomConfigs if expectedPrice is zero or not set
+  if (category === 'pg' && propertyPayload.pgDetails?.roomConfigs?.length > 0) {
+    const rents = propertyPayload.pgDetails.roomConfigs
+      .map((r) => Number(r.monthlyRent || r.rent))
+      .filter((r) => !isNaN(r) && r > 0);
+    if (rents.length > 0) {
+      const minRent = Math.min(...rents);
+      if (!propertyPayload.pricing) propertyPayload.pricing = {};
+      if (!propertyPayload.pricing.expectedPrice || propertyPayload.pricing.expectedPrice === 0) {
+        propertyPayload.pricing.expectedPrice = minRent;
+      }
+      if (!propertyPayload.pricing.securityDeposit || propertyPayload.pricing.securityDeposit === 0) {
+        propertyPayload.pricing.securityDeposit = propertyPayload.pgDetails.roomConfigs[0].deposit || minRent;
+      }
+    }
+  }
 
   const property = await Property.create(propertyPayload);
+
+  // Keep PG collection synchronized with identical _id
+  if (category === 'pg') {
+    try {
+      const PG = require('../models/PG.model');
+      await PG.findByIdAndUpdate(
+        property._id,
+        {
+          $set: {
+            _id: property._id,
+            owner: property.owner,
+            name: property.title,
+            description: property.description,
+            city: property.city,
+            area: property.area,
+            address: property.address,
+            fullAddress: property.fullAddress,
+            latitude: property.latitude,
+            longitude: property.longitude,
+            location: property.location,
+            photos: property.photos,
+            videos: property.videos,
+            facilities: property.amenities,
+            contactPhone: property.contactPhone,
+            contactWhatsapp: property.contactWhatsapp,
+            nearbyPlaces: property.nearbyPlaces,
+            status: property.status,
+            isVerified: property.isVerified,
+            roomConfigs: property.pgDetails?.roomConfigs || [],
+            minRent: property.pricing?.expectedPrice || 0,
+            securityDeposit: property.pricing?.securityDeposit || 0,
+            food: property.pgDetails?.food || 'none',
+            foodIncluded: property.pgDetails?.foodIncluded || false,
+            foodInfo: property.pgDetails?.foodInfo || {},
+            ac: property.pgDetails?.ac || false,
+            gender: property.pgDetails?.gender || 'any',
+            rules: property.pgDetails?.rules || {},
+          },
+        },
+        { upsert: true }
+      );
+    } catch (pgSyncErr) {
+      console.warn('PG sync warning on createProperty:', pgSyncErr.message);
+    }
+  }
 
   // 4. Auto-compute quality score
   const score = computeDataQualityScore(property.toObject());
@@ -270,11 +492,19 @@ const updateProperty = async (propertyId, userId, data, userRole = 'owner') => {
     throw err;
   }
 
-  removeInactiveCategoryDetails(data, data.category || property.category);
+  sanitizePropertyPayload(data);
+  removeInactiveCategoryDetails(data, data.category || property.category, data.purpose || property.purpose);
   await canonicalizePropertyCity(data);
 
-  // Direct update for admin or unapproved drafts
-  if (userRole === 'admin' || property.status === 'draft' || property.status === 'correction_required') {
+  // Direct update for admin, unapproved drafts, submitted, pending_review, correction_required, or rejected listings
+  if (
+    userRole === 'admin' ||
+    property.status === 'draft' ||
+    property.status === 'submitted' ||
+    property.status === 'pending_review' ||
+    property.status === 'correction_required' ||
+    property.status === 'rejected'
+  ) {
     if (data.photos && data.photos.length > 0) {
       const hasMain = data.photos.some((p) => p.isMain);
       if (!hasMain) data.photos[0].isMain = true;
@@ -282,9 +512,14 @@ const updateProperty = async (propertyId, userId, data, userRole = 'owner') => {
 
     data.dataQualityScore = computeDataQualityScore({ ...property.toObject(), ...data });
 
-    // If it was correction_required, reset status to submitted
-    if (property.status === 'correction_required' && userRole !== 'admin') {
+    // If it was correction_required or rejected, reset status to submitted
+    if (
+      (property.status === 'correction_required' || property.status === 'rejected') &&
+      userRole !== 'admin'
+    ) {
       data.status = 'submitted';
+      data.rejectionReason = null;
+      data.correctionComments = null;
     }
 
     const updated = await Property.findByIdAndUpdate(
@@ -292,6 +527,40 @@ const updateProperty = async (propertyId, userId, data, userRole = 'owner') => {
       { $set: data },
       { new: true, runValidators: true }
     );
+
+    if (updated.category === 'pg') {
+      try {
+        const PG = require('../models/PG.model');
+        const pgSync = {};
+        if (data.title) pgSync.name = data.title;
+        if (data.description !== undefined) pgSync.description = data.description;
+        if (data.city) pgSync.city = data.city;
+        if (data.area) pgSync.area = data.area;
+        if (data.address) pgSync.address = data.address;
+        if (data.photos) pgSync.photos = data.photos;
+        if (data.videos) pgSync.videos = data.videos;
+        if (data.amenities) pgSync.facilities = data.amenities;
+        if (data.contactPhone) pgSync.contactPhone = data.contactPhone;
+        if (data.contactWhatsapp !== undefined) pgSync.contactWhatsapp = data.contactWhatsapp;
+        if (data.status) pgSync.status = data.status;
+        if (data.pgDetails?.roomConfigs) {
+          pgSync.roomConfigs = data.pgDetails.roomConfigs;
+          const rents = data.pgDetails.roomConfigs.map((r) => Number(r.monthlyRent || r.rent)).filter((r) => !isNaN(r) && r > 0);
+          if (rents.length > 0) pgSync.minRent = Math.min(...rents);
+        }
+        if (data.pricing?.expectedPrice) pgSync.minRent = data.pricing.expectedPrice;
+        if (data.pricing?.securityDeposit) pgSync.securityDeposit = data.pricing.securityDeposit;
+        if (data.pgDetails?.food) pgSync.food = data.pgDetails.food;
+        if (data.pgDetails?.foodIncluded !== undefined) pgSync.foodIncluded = data.pgDetails.foodIncluded;
+        if (data.pgDetails?.foodInfo) pgSync.foodInfo = data.pgDetails.foodInfo;
+        if (Object.keys(pgSync).length > 0) {
+          await PG.findByIdAndUpdate(propertyId, { $set: pgSync });
+        }
+      } catch (pgSyncErr) {
+        console.warn('PG sync warning on direct updateProperty:', pgSyncErr.message);
+      }
+    }
+
     return { requestCreated: false, property: updated };
   }
 
@@ -336,6 +605,10 @@ const deleteProperty = async (propertyId, userId, role) => {
     err.statusCode = 404;
     throw err;
   }
+  try {
+    const PG = require('../models/PG.model');
+    await PG.findByIdAndDelete(propertyId);
+  } catch (e) {}
   return property;
 };
 
@@ -343,11 +616,46 @@ const deleteProperty = async (propertyId, userId, role) => {
  * Get property by ID with guest privacy masking
  */
 const getPropertyById = async (propertyId, user = null) => {
-  const property = await Property.findByIdAndUpdate(
+  let property = await Property.findByIdAndUpdate(
     propertyId,
     { $inc: { views: 1 } },
     { new: true }
   ).populate('owner', 'name email phone profilePhoto');
+
+  if (!property) {
+    const legacyPg = await PG.findByIdAndUpdate(
+      propertyId,
+      { $inc: { views: 1 } },
+      { new: true }
+    ).populate('owner', 'name email phone profilePhoto');
+
+    if (legacyPg) {
+      const pgObj = legacyPg.toObject();
+      property = {
+        toObject: () => ({
+          ...pgObj,
+          category: 'pg',
+          purpose: 'rent',
+          title: pgObj.name,
+          photos: pgObj.photos || [],
+          pricing: {
+            expectedPrice: pgObj.minRent || pgObj.rent?.single || 0,
+            securityDeposit: pgObj.securityDeposit || 0,
+          },
+          pgDetails: {
+            gender: pgObj.gender,
+            roomConfigs: pgObj.roomConfigs || [],
+            food: pgObj.food,
+            foodIncluded: pgObj.foodIncluded,
+            foodInfo: pgObj.foodInfo,
+            rules: pgObj.rules,
+            totalRooms: pgObj.totalRooms,
+            floors: pgObj.floors,
+          },
+        }),
+      };
+    }
+  }
 
   if (!property) {
     const err = new Error('Property not found');
@@ -436,4 +744,5 @@ module.exports = {
   deleteProperty,
   getPropertyById,
   getMyPropertiesPaginated,
+  sanitizePropertyPayload,
 };

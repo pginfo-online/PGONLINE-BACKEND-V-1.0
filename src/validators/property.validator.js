@@ -16,24 +16,42 @@ const requiredCoercedNumber = (msg = 'Valid number required', min = 0) =>
 
 // ─── Media & Sub-schemas ──────────────────────────────────────────────────────
 
-const photoSchema = z.object({
-  url: z.string().url('Enter a valid photo URL'),
-  publicId: z.string(),
-  caption: z.string().optional(),
-  isMain: z.boolean().default(false),
-  order: z.number().optional(),
-  _id: z.any().optional(),
-});
+const photoSchema = z.union([
+  z.string().url('Enter a valid photo URL').transform((url) => ({
+    url,
+    publicId: '',
+    caption: '',
+    isMain: false,
+    order: 0,
+  })),
+  z.object({
+    url: z.string().url('Enter a valid photo URL'),
+    publicId: z.string().optional().default(''),
+    caption: z.string().optional().default(''),
+    isMain: z.boolean().default(false),
+    order: z.number().optional().default(0),
+    _id: z.any().optional(),
+  }),
+]);
 
-const videoSchema = z.object({
-  url: z.string().url('Enter a valid video URL'),
-  publicId: z.string(),
-  thumbnailUrl: z.string().optional(),
-  title: z.string().max(150).optional(),
-  duration: z.number().optional(),
-  order: z.number().optional(),
-  _id: z.any().optional(),
-});
+const videoSchema = z.union([
+  z.string().url('Enter a valid video URL').transform((url) => ({
+    url,
+    publicId: '',
+    title: 'Walkthrough Video Tour',
+    duration: 0,
+    order: 0,
+  })),
+  z.object({
+    url: z.string().url('Enter a valid video URL'),
+    publicId: z.string().optional().default(''),
+    thumbnailUrl: z.string().optional(),
+    title: z.string().max(150).optional().default('Walkthrough Video Tour'),
+    duration: z.number().optional().default(0),
+    order: z.number().optional().default(0),
+    _id: z.any().optional(),
+  }),
+]);
 
 const documentSchema = z.object({
   url: z.string().url('Enter a valid document URL'),
@@ -80,9 +98,12 @@ const brokerageSchema = z.object({
 // ─── PG Details Schema ────────────────────────────────────────────────────────
 
 const roomConfigSchema = z.object({
-  shareType: z.enum(['single', 'double', 'triple', 'four', 'dormitory', 'studio']),
-  rent: z.coerce.number().min(0, 'Rent must be a positive number'),
+  shareType: z.enum(['single', 'double', 'triple', 'four', 'dormitory', 'studio', 'other']).default('single'),
+  rent: z.coerce.number().min(0).optional(),
+  monthlyRent: z.coerce.number().min(0).optional(),
   depositAmount: nullableCoercedNumber,
+  deposit: nullableCoercedNumber,
+  sharing: nullableCoercedNumber,
   totalBeds: nullableCoercedNumber,
   availableBeds: nullableCoercedNumber,
   roomSize: z.string().optional(),
@@ -91,6 +112,16 @@ const roomConfigSchema = z.object({
   bathroomType: z.enum(['attached', 'shared', 'common-floor']).optional(),
   amenities: z.array(z.string()).optional(),
   _id: z.any().optional(),
+}).transform((rc) => {
+  const rentVal = rc.rent ?? rc.monthlyRent ?? 0;
+  const depVal = rc.depositAmount ?? rc.deposit ?? null;
+  return {
+    ...rc,
+    rent: rentVal,
+    monthlyRent: rentVal,
+    depositAmount: depVal,
+    deposit: depVal,
+  };
 });
 
 const pgDetailsSchema = z.object({
@@ -108,16 +139,34 @@ const pgDetailsSchema = z.object({
     type: z.enum(['veg', 'nonveg', 'both']).optional(),
     includedInRent: z.coerce.boolean().optional(),
     mealCostPerMonth: nullableCoercedNumber,
+    monthlyFoodCharge: nullableCoercedNumber,
     mealsPerDay: z.coerce.number().min(1).max(3).optional(),
     mealTimings: z.object({
       breakfast: z.object({ provided: z.coerce.boolean().optional(), from: z.string().optional(), to: z.string().optional() }).optional(),
       lunch: z.object({ provided: z.coerce.boolean().optional(), from: z.string().optional(), to: z.string().optional() }).optional(),
       dinner: z.object({ provided: z.coerce.boolean().optional(), from: z.string().optional(), to: z.string().optional() }).optional(),
     }).nullable().optional(),
+    dailySchedule: z.object({
+      breakfast: z.object({ provided: z.coerce.boolean().optional(), start: z.string().optional(), end: z.string().optional(), from: z.string().optional(), to: z.string().optional() }).optional(),
+      lunch: z.object({ provided: z.coerce.boolean().optional(), start: z.string().optional(), end: z.string().optional(), from: z.string().optional(), to: z.string().optional() }).optional(),
+      dinner: z.object({ provided: z.coerce.boolean().optional(), start: z.string().optional(), end: z.string().optional(), from: z.string().optional(), to: z.string().optional() }).optional(),
+    }).nullable().optional(),
     kitchenAccess: z.coerce.boolean().optional(),
+    kitchenAccessForTenants: z.coerce.boolean().optional(),
     kitchenHours: z.string().optional(),
     messType: z.enum(['in-house', 'outsourced', 'tiffin-service', 'self']).optional(),
-  }).nullable().optional(),
+  }).nullable().optional().transform((val) => {
+    if (!val) return val;
+    const foodCost = val.mealCostPerMonth ?? val.monthlyFoodCharge ?? 0;
+    const kAccess = val.kitchenAccess ?? val.kitchenAccessForTenants ?? false;
+    return {
+      ...val,
+      mealCostPerMonth: foodCost,
+      monthlyFoodCharge: foodCost,
+      kitchenAccess: kAccess,
+      kitchenAccessForTenants: kAccess,
+    };
+  }),
   ac: z.coerce.boolean().default(false),
   rules: z.object({
     smokingAllowed: z.coerce.boolean().optional(),
@@ -290,8 +339,8 @@ const basePropertyFields = {
   pricing: pricingSchema,
 
   // Media
-  photos: z.array(photoSchema).nullable().optional(),
-  videos: z.array(videoSchema).nullable().optional(),
+  photos: z.array(photoSchema).max(20, 'Maximum 20 photos allowed').nullable().optional(),
+  videos: z.array(videoSchema).max(1, 'Maximum 1 video allowed').nullable().optional(),
   documents: z.array(documentSchema).nullable().optional(),
 
   // Amenities

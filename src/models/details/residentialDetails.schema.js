@@ -50,7 +50,7 @@ const residentialDetailsSchema = new mongoose.Schema(
 
     // Area & Measurement
     carpetAreaSqFt: { type: Number, min: 10, required: true },
-    superBuiltUpAreaSqFt: { type: Number, min: 10 },
+    superBuiltUpAreaSqFt: { type: Number, min: 0 },
     plotAreaSqYards: { type: Number, min: 0 },
 
     // Floor & Building

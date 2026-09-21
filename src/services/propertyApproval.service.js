@@ -122,6 +122,18 @@ const approveProperty = async (propertyId, adminId) => {
     throw err;
   }
 
+  if (property.category === 'pg') {
+    try {
+      await PG.findByIdAndUpdate(propertyId, {
+        $set: {
+          status: 'approved',
+          rejectionReason: null,
+          isVerified: property.isVerified,
+        },
+      });
+    } catch (e) {}
+  }
+
   // Trigger notification
   if (notificationTrigger && notificationTrigger.onPGApproved) {
     notificationTrigger.onPGApproved(property).catch(() => {});
@@ -149,6 +161,17 @@ const rejectProperty = async (propertyId, adminId, reason) => {
     const err = new Error('Property not found');
     err.statusCode = 404;
     throw err;
+  }
+
+  if (property.category === 'pg') {
+    try {
+      await PG.findByIdAndUpdate(propertyId, {
+        $set: {
+          status: 'rejected',
+          rejectionReason: reason || 'Listing does not meet quality guidelines',
+        },
+      });
+    } catch (e) {}
   }
 
   if (notificationTrigger && notificationTrigger.onPGRejected) {
@@ -179,6 +202,16 @@ const requestCorrection = async (propertyId, adminId, comments) => {
     throw err;
   }
 
+  if (property.category === 'pg') {
+    try {
+      await PG.findByIdAndUpdate(propertyId, {
+        $set: {
+          status: 'pending',
+        },
+      });
+    } catch (e) {}
+  }
+
   return property;
 };
 
@@ -203,6 +236,16 @@ const suspendProperty = async (propertyId, adminId, notes) => {
     throw err;
   }
 
+  if (property.category === 'pg') {
+    try {
+      await PG.findByIdAndUpdate(propertyId, {
+        $set: {
+          status: 'rejected',
+        },
+      });
+    } catch (e) {}
+  }
+
   return property;
 };
 
@@ -220,6 +263,14 @@ const toggleVerify = async (propertyId) => {
   property.isVerified = !property.isVerified;
   property.verifiedAt = property.isVerified ? new Date() : null;
   await property.save();
+
+  if (property.category === 'pg') {
+    try {
+      await PG.findByIdAndUpdate(propertyId, {
+        $set: { isVerified: property.isVerified },
+      });
+    } catch (e) {}
+  }
 
   return property;
 };

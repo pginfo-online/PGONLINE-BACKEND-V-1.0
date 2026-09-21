@@ -39,13 +39,20 @@ const foodInfoSchema = new mongoose.Schema(
     type: { type: String, enum: ['veg', 'nonveg', 'both'], default: 'veg' },
     includedInRent: { type: Boolean, default: false },
     mealCostPerMonth: { type: Number, min: 0 },
+    monthlyFoodCharge: { type: Number, min: 0 },
     mealsPerDay: { type: Number, min: 1, max: 3 },
     mealTimings: {
       breakfast: mealTimingSchema,
       lunch: mealTimingSchema,
       dinner: mealTimingSchema,
     },
+    dailySchedule: {
+      breakfast: mealTimingSchema,
+      lunch: mealTimingSchema,
+      dinner: mealTimingSchema,
+    },
     kitchenAccess: { type: Boolean, default: false },
+    kitchenAccessForTenants: { type: Boolean, default: false },
     kitchenHours: { type: String, trim: true },
     messType: {
       type: String,

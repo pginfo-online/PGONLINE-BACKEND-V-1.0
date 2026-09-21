@@ -36,6 +36,15 @@ const rejectUpdateRequest = asyncHandler(async (req, res) => {
 });
 
 /**
+ * @route PUT /api/v1/admin/property-updates/:id/correction
+ */
+const requestCorrection = asyncHandler(async (req, res) => {
+  const { comment } = req.body;
+  const request = await propertyUpdateRequestService.requestCorrection(req.params.id, req.user._id, comment);
+  successResponse(res, 'Correction requested on property update', { request });
+});
+
+/**
  * @route DELETE /api/v1/property-updates/:id/cancel
  */
 const cancelUpdateRequest = asyncHandler(async (req, res) => {
@@ -48,5 +57,6 @@ module.exports = {
   getUpdateRequestById,
   approveUpdateRequest,
   rejectUpdateRequest,
+  requestCorrection,
   cancelUpdateRequest,
 };

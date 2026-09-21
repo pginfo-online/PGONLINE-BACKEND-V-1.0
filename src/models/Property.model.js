@@ -5,7 +5,7 @@ const mongoose = require('mongoose');
 const photoSchema = new mongoose.Schema(
   {
     url: { type: String, required: true },
-    publicId: { type: String, required: true },
+    publicId: { type: String, default: '' },
     caption: { type: String, trim: true },
     isMain: { type: Boolean, default: false },
     order: { type: Number, default: 0 },
@@ -16,7 +16,7 @@ const photoSchema = new mongoose.Schema(
 const videoSchema = new mongoose.Schema(
   {
     url: { type: String, required: true },
-    publicId: { type: String, required: true },
+    publicId: { type: String, default: '' },
     thumbnailUrl: { type: String },
     title: { type: String, trim: true, maxlength: 150 },
     duration: { type: Number },
@@ -179,16 +179,16 @@ const propertySchema = new mongoose.Schema(
       type: [photoSchema],
       default: [],
       validate: {
-        validator: function (v) { return v.length <= 30; },
-        message: 'A property can have at most 30 photos',
+        validator: function (v) { return v.length <= 20; },
+        message: 'A property can have at most 20 photos',
       },
     },
     videos: {
       type: [videoSchema],
       default: [],
       validate: {
-        validator: function (v) { return v.length <= 5; },
-        message: 'A property can have at most 5 videos',
+        validator: function (v) { return v.length <= 1; },
+        message: 'A property can have at most 1 video',
       },
     },
     documents: {

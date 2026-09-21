@@ -2,34 +2,96 @@ const asyncHandler = require('../utils/asyncHandler');
 const { successResponse } = require('../utils/apiResponse');
 const uploadService = require('../services/upload.service');
 const PG = require('../models/PG.model');
+const Property = require('../models/Property.model');
 
 const ALLOWED_VIDEO_TYPES = ['video/mp4', 'video/webm', 'video/quicktime', 'video/x-msvideo'];
-const MAX_VIDEO_SIZE_BYTES = 100 * 1024 * 1024; // 100 MB
-const MAX_VIDEOS_PER_PG = 3;
+const MAX_VIDEO_SIZE_BYTES = 50 * 1024 * 1024; // 50 MB
+const MAX_VIDEOS_PER_PROPERTY = 1;
+const MAX_PHOTOS_PER_PROPERTY = 20;
+
+/**
+ * Helper to find entity in Property first, then PG
+ */
+const findPropertyOrPG = async (id, user) => {
+  const query = user.role === 'admin' ? { _id: id } : { _id: id, owner: user._id };
+  const property = await Property.findOne(query);
+  if (property) return { doc: property, model: 'Property' };
+
+  const pg = await PG.findOne(query);
+  if (pg) return { doc: pg, model: 'PG' };
+
+  return { doc: null, model: null };
+};
 
 /**
  * @route POST /api/v1/upload/images
- * Upload multiple images to Cloudinary and attach to a PG
+ * Upload multiple images to Cloudinary and attach to a Property or PG
  */
 const uploadImages = asyncHandler(async (req, res) => {
   if (!req.files || req.files.length === 0) {
     return res.status(400).json({ success: false, message: 'No files uploaded' });
   }
 
-  const images = await uploadService.uploadImages(req.files, 'pginfo/pg-photos');
+  const targetId = req.body.propertyId || req.body.pgId;
+  let targetDoc = null;
+  let targetModel = null;
 
-  const { pgId, setMain } = req.body;
-  if (pgId) {
-    const pgQuery = req.user.role === 'admin' ? { _id: pgId } : { _id: pgId, owner: req.user._id };
-    const pg = await PG.findOne(pgQuery);
-    if (pg) {
-      if (setMain && images.length > 0) {
-        pg.photos.forEach((p) => (p.isMain = false));
-        images[0].isMain = true;
-      }
-      pg.photos.push(...images);
-      await pg.save();
+  if (targetId) {
+    const found = await findPropertyOrPG(targetId, req.user);
+    targetDoc = found.doc;
+    targetModel = found.model;
+
+    if (!targetDoc) {
+      return res.status(404).json({ success: false, message: 'Property not found or unauthorized' });
     }
+
+    const currentCount = targetDoc.photos ? targetDoc.photos.length : 0;
+    if (currentCount + req.files.length > MAX_PHOTOS_PER_PROPERTY) {
+      return res.status(400).json({
+        success: false,
+        message: `Maximum ${MAX_PHOTOS_PER_PROPERTY} photos allowed. Current: ${currentCount}, trying to add: ${req.files.length}`,
+      });
+    }
+  }
+
+  const images = await uploadService.uploadImages(req.files, 'pginfo/property-photos');
+
+  if (targetDoc) {
+    const setMain = req.body.setMain === 'true' || req.body.setMain === true;
+    const existingPhotos = targetDoc.photos || [];
+
+    if (setMain && images.length > 0) {
+      existingPhotos.forEach((p) => (p.isMain = false));
+      images[0].isMain = true;
+    } else if (existingPhotos.length === 0 && images.length > 0) {
+      images[0].isMain = true;
+    }
+
+    images.forEach((img, idx) => {
+      img.order = existingPhotos.length + idx;
+    });
+
+    existingPhotos.push(...images);
+    targetDoc.photos = existingPhotos.slice(0, MAX_PHOTOS_PER_PROPERTY);
+    await targetDoc.save();
+
+    // If target was Property, keep PG in sync if exists
+    if (targetModel === 'Property') {
+      try {
+        await PG.findByIdAndUpdate(targetId, { $set: { photos: targetDoc.photos } });
+      } catch (e) {}
+    } else {
+      try {
+        await Property.findByIdAndUpdate(targetId, { $set: { photos: targetDoc.photos } });
+      } catch (e) {}
+    }
+
+    return successResponse(
+      res,
+      `${images.length} image(s) uploaded and saved to property`,
+      { images, photos: targetDoc.photos },
+      201
+    );
   }
 
   successResponse(res, `${images.length} image(s) uploaded successfully`, { images }, 201);
@@ -37,8 +99,8 @@ const uploadImages = asyncHandler(async (req, res) => {
 
 /**
  * @route POST /api/v1/upload/video
- * Upload a single video to Cloudinary and attach to a PG.
- * Validates MIME type, file size, and max videos per PG.
+ * Upload a single video to Cloudinary and attach to a Property or PG.
+ * Validates MIME type, file size (max 50MB), and max 1 video per property.
  */
 const uploadVideo = asyncHandler(async (req, res) => {
   if (!req.file) {
@@ -53,105 +115,128 @@ const uploadVideo = asyncHandler(async (req, res) => {
     });
   }
 
-  // File size validation
+  // File size validation (Max 50MB)
   if (req.file.size > MAX_VIDEO_SIZE_BYTES) {
     return res.status(413).json({
       success: false,
-      message: `Video too large. Maximum allowed size is 100 MB. Got: ${(req.file.size / 1024 / 1024).toFixed(1)} MB`,
+      message: `Video too large. Maximum allowed size is 50 MB. Got: ${(req.file.size / 1024 / 1024).toFixed(1)} MB`,
     });
   }
 
-  const { pgId, title } = req.body;
+  const targetId = req.body.propertyId || req.body.pgId;
+  const { title } = req.body;
 
-  // Max videos per PG validation
-  if (pgId) {
-    const pgQuery = req.user.role === 'admin' ? { _id: pgId } : { _id: pgId, owner: req.user._id };
-    const pg = await PG.findOne(pgQuery);
-    if (!pg) {
-      return res.status(404).json({ success: false, message: 'PG not found or not authorized' });
-    }
-    if (pg.videos && pg.videos.length >= MAX_VIDEOS_PER_PG) {
-      return res.status(400).json({
-        success: false,
-        message: `Maximum ${MAX_VIDEOS_PER_PG} videos allowed per PG. Please delete an existing video first.`,
-      });
+  if (targetId) {
+    const { doc: targetDoc, model } = await findPropertyOrPG(targetId, req.user);
+    if (!targetDoc) {
+      return res.status(404).json({ success: false, message: 'Property not found or not authorized' });
     }
 
-    const videoData = await uploadService.uploadVideo(req.file, 'pginfo/pg-videos');
+    // If an existing video exists, replace it
+    if (targetDoc.videos && targetDoc.videos.length >= MAX_VIDEOS_PER_PROPERTY) {
+      const oldVideo = targetDoc.videos[0];
+      if (oldVideo?.publicId) {
+        uploadService.deleteAssets([oldVideo.publicId], 'video').catch((err) => {
+          console.warn('Could not remove old video from Cloudinary:', err.message);
+        });
+      }
+      targetDoc.videos = [];
+    }
+
+    const videoData = await uploadService.uploadVideo(req.file, 'pginfo/property-videos');
     const videoEntry = {
       ...videoData,
-      title: title || null,
-      order: pg.videos.length,
+      title: title || 'Walkthrough Video Tour',
+      order: 0,
+      uploadedAt: new Date(),
     };
 
-    pg.videos.push(videoEntry);
-    await pg.save();
+    targetDoc.videos = [videoEntry];
+    await targetDoc.save();
 
-    const savedVideo = pg.videos[pg.videos.length - 1];
-    return successResponse(res, 'Video uploaded successfully', { video: savedVideo }, 201);
+    const savedVideo = targetDoc.videos[0];
+    return successResponse(res, 'Walkthrough video uploaded successfully', { video: savedVideo }, 201);
   }
 
-  // Upload without attaching to a PG
-  const videoData = await uploadService.uploadVideo(req.file, 'pginfo/pg-videos');
+  // Upload without attaching to a property
+  const videoData = await uploadService.uploadVideo(req.file, 'pginfo/property-videos');
   successResponse(res, 'Video uploaded successfully', { video: videoData }, 201);
 });
 
 /**
- * @route DELETE /api/v1/upload/image/:pgId
- * Remove a photo from a PG listing and delete from Cloudinary
+ * @route DELETE /api/v1/upload/image/:id
+ * Remove a photo from a Property or PG listing and delete from Cloudinary
  */
 const deleteImage = asyncHandler(async (req, res) => {
-  const { pgId } = req.params;
-  const { publicId } = req.body;
+  const targetId = req.params.pgId || req.params.id;
+  const { publicId, url } = req.body;
 
-  if (!publicId) {
-    return res.status(400).json({ success: false, message: 'publicId is required' });
+  if (!publicId && !url) {
+    return res.status(400).json({ success: false, message: 'publicId or url is required' });
   }
 
-  const pgQuery = req.user.role === 'admin' ? { _id: pgId } : { _id: pgId, owner: req.user._id };
-  const pg = await PG.findOne(pgQuery);
-  if (!pg) return res.status(404).json({ success: false, message: 'PG not found' });
+  const { doc: targetDoc, model } = await findPropertyOrPG(targetId, req.user);
+  if (!targetDoc) return res.status(404).json({ success: false, message: 'Property not found' });
 
-  try {
-    await uploadService.deleteAssets([publicId], 'image');
-  } catch (cloudErr) {
-    console.warn('Cloudinary delete image warning:', cloudErr.message);
+  if (publicId) {
+    try {
+      await uploadService.deleteAssets([publicId], 'image');
+    } catch (cloudErr) {
+      console.warn('Cloudinary delete image warning:', cloudErr.message);
+    }
   }
 
-  // Atomically remove photo using $pull (prevents Mongoose VersionError)
-  const updatedPG = await PG.findByIdAndUpdate(
-    pgId,
-    { $pull: { photos: { publicId } } },
+  const pullCondition = publicId && url
+    ? { $or: [{ publicId }, { url }] }
+    : publicId
+    ? { publicId }
+    : { url };
+
+  const updatedDoc = await Property.findByIdAndUpdate(
+    targetId,
+    { $pull: { photos: pullCondition } },
     { new: true }
   );
 
+  // Keep PG in sync if it exists
+  try {
+    await PG.findByIdAndUpdate(targetId, { $pull: { photos: pullCondition } });
+  } catch (e) {}
+
+  const finalDoc = updatedDoc || targetDoc;
+
   // If main photo was deleted and other photos exist, set first remaining as main
-  if (updatedPG?.photos?.length > 0 && !updatedPG.photos.some((p) => p.isMain)) {
-    await PG.updateOne(
-      { _id: pgId, 'photos.0': { $exists: true } },
+  if (finalDoc?.photos?.length > 0 && !finalDoc.photos.some((p) => p.isMain)) {
+    await Property.updateOne(
+      { _id: targetId, 'photos.0': { $exists: true } },
       { $set: { 'photos.0.isMain': true } }
     );
-    updatedPG.photos[0].isMain = true;
+    try {
+      await PG.updateOne(
+        { _id: targetId, 'photos.0': { $exists: true } },
+        { $set: { 'photos.0.isMain': true } }
+      );
+    } catch (e) {}
+    finalDoc.photos[0].isMain = true;
   }
 
-  successResponse(res, 'Image deleted', { photos: updatedPG ? updatedPG.photos : [] });
+  successResponse(res, 'Image deleted', { photos: finalDoc ? finalDoc.photos : [] });
 });
 
 /**
- * @route DELETE /api/v1/upload/video/:pgId
- * Remove a video from a PG listing and delete from Cloudinary
+ * @route DELETE /api/v1/upload/video/:id
+ * Remove a video from a Property or PG listing and delete from Cloudinary
  */
 const deleteVideo = asyncHandler(async (req, res) => {
-  const { pgId } = req.params;
+  const targetId = req.params.pgId || req.params.id;
   const { publicId } = req.body;
 
   if (!publicId) {
     return res.status(400).json({ success: false, message: 'publicId is required' });
   }
 
-  const pgQuery = req.user.role === 'admin' ? { _id: pgId } : { _id: pgId, owner: req.user._id };
-  const pg = await PG.findOne(pgQuery);
-  if (!pg) return res.status(404).json({ success: false, message: 'PG not found' });
+  const { doc: targetDoc, model } = await findPropertyOrPG(targetId, req.user);
+  if (!targetDoc) return res.status(404).json({ success: false, message: 'Property not found' });
 
   try {
     await uploadService.deleteAssets([publicId], 'video');
@@ -159,21 +244,14 @@ const deleteVideo = asyncHandler(async (req, res) => {
     console.warn('Cloudinary delete video warning:', cloudErr.message);
   }
 
-  // Atomically pull video from PG document (prevents VersionError)
-  const updatedPG = await PG.findByIdAndUpdate(
-    pgId,
+  const Model = model === 'Property' ? Property : PG;
+  const updatedDoc = await Model.findByIdAndUpdate(
+    targetId,
     { $pull: { videos: { publicId } } },
     { new: true }
   );
 
-  // Re-assign order values if needed
-  if (updatedPG?.videos?.length > 0) {
-    const reordered = updatedPG.videos.map((v, i) => ({ ...v.toObject(), order: i }));
-    await PG.findByIdAndUpdate(pgId, { $set: { videos: reordered } });
-    updatedPG.videos = reordered;
-  }
-
-  successResponse(res, 'Video deleted', { videos: updatedPG ? updatedPG.videos : [] });
+  successResponse(res, 'Video deleted', { videos: updatedDoc ? updatedDoc.videos : [] });
 });
 
 module.exports = { uploadImages, uploadVideo, deleteImage, deleteVideo };
