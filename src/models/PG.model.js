@@ -262,7 +262,17 @@ const pgSchema = new mongoose.Schema(
     // ── Status & Moderation ───────────────────────────────────────────────────
     status: {
       type: String,
-      enum: ['pending', 'approved', 'rejected'],
+      enum: [
+        'draft',
+        'pending',
+        'submitted',
+        'pending_review',
+        'approved',
+        'rejected',
+        'correction_required',
+        'suspended',
+        'archived',
+      ],
       default: 'pending',
     },
     rejectionReason: { type: String, default: null },
@@ -280,6 +290,15 @@ const pgSchema = new mongoose.Schema(
     // ── Analytics ─────────────────────────────────────────────────────────────
     views: { type: Number, default: 0 },
     inquiries: { type: Number, default: 0 },
+
+    // ── Billing & Rent Settings ───────────────────────────────────────────────
+    rentSettings: {
+      dueDayOfMonth: { type: Number, min: 1, max: 28, default: 5 },
+      lateFeePerDay: { type: Number, min: 0, default: 50 },
+      autoRemindWhatsApp: { type: Boolean, default: true },
+      autoRemindEmail: { type: Boolean, default: false },
+      remindDaysBefore: { type: Number, min: 1, max: 15, default: 2 },
+    },
   },
   {
     timestamps: true,

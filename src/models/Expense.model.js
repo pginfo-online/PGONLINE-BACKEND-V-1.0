@@ -21,9 +21,10 @@ const expenseSchema = new mongoose.Schema(
     category: {
       type: String,
       enum: [
-        'maintenance', 'utilities', 'staff_salary', 'food', 'cleaning',
-        'security', 'internet', 'rent', 'furniture', 'equipment',
-        'taxes', 'insurance', 'marketing', 'other',
+        'maintenance', 'utilities', 'electricity', 'water', 'staff_salary', 'salary',
+        'food', 'groceries', 'cleaning', 'housekeeping', 'repairs', 'security',
+        'internet', 'rent', 'furniture', 'equipment', 'taxes', 'insurance',
+        'marketing', 'gas', 'miscellaneous', 'other',
       ],
       required: [true, 'Category is required'],
     },

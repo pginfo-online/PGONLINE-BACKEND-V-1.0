@@ -468,6 +468,7 @@ const updatePropertySchema = z.object({
 
 const propertyQuerySchema = z.object({
   category: z.enum(['pg', 'residential_rental', 'commercial', 'all']).optional(),
+  propertyType: z.string().optional(),
   purpose: z.enum(['rent', 'sale', 'all']).optional(),
   city: z.string().optional(),
   area: z.string().optional(),
@@ -475,6 +476,8 @@ const propertyQuerySchema = z.object({
   q: z.string().optional(),
   minPrice: nullableCoercedNumber,
   maxPrice: nullableCoercedNumber,
+  minRent: nullableCoercedNumber,
+  maxRent: nullableCoercedNumber,
   bhk: z.string().optional(),
   commercialSubtype: z.string().optional(),
   furnishingStatus: z.string().optional(),
@@ -487,7 +490,7 @@ const propertyQuerySchema = z.object({
   lat: z.coerce.number().optional(),
   lng: z.coerce.number().optional(),
   radius: z.coerce.number().optional(),
-  sort: z.enum(['price_asc', 'price_desc', 'popular', 'distance', 'newest']).optional(),
+  sort: z.enum(['price_asc', 'price_desc', 'rent_asc', 'rent_desc', 'popular', 'distance', 'newest']).optional(),
   page: z.coerce.number().min(1).optional(),
   limit: z.coerce.number().min(1).max(50).optional(),
   status: z.string().optional(),

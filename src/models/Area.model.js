@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+require('./City.model');
 
 /**
  * Area Model — geographic subdivision of a City.

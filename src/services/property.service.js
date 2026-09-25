@@ -667,6 +667,51 @@ const getPropertyById = async (propertyId, user = null) => {
   const isGuest = !user;
   propObj.isPublicPreview = isGuest;
 
+  // Ensure backward-compatibility for PG callers and user-facing screens
+  if (propObj.category === 'pg' || propObj.pgDetails) {
+    propObj.name = propObj.name || propObj.title;
+    propObj.facilities = propObj.facilities || propObj.amenities || [];
+    propObj.amenities = propObj.amenities || propObj.facilities || [];
+    propObj.roomConfigs = propObj.roomConfigs || propObj.pgDetails?.roomConfigs || [];
+    propObj.gender = propObj.gender || propObj.pgDetails?.gender || 'any';
+    propObj.food = propObj.food || propObj.pgDetails?.food || 'none';
+    propObj.foodIncluded = propObj.foodIncluded ?? propObj.pgDetails?.foodIncluded ?? false;
+    propObj.foodInfo = propObj.foodInfo || propObj.pgDetails?.foodInfo || {};
+    propObj.rules = propObj.rules || propObj.pgDetails?.rules || {};
+    propObj.securityDeposit =
+      propObj.securityDeposit ??
+      propObj.pricing?.securityDeposit ??
+      propObj.pgDetails?.roomConfigs?.[0]?.depositAmount ??
+      0;
+    propObj.noticePeriod = propObj.noticePeriod ?? propObj.pgDetails?.noticePeriod ?? 30;
+    propObj.minStay = propObj.minStay ?? propObj.pgDetails?.minStay ?? 1;
+    propObj.isAvailable = propObj.isAvailable ?? propObj.pgDetails?.isAvailable ?? true;
+    propObj.propertyType = propObj.propertyType || propObj.pgDetails?.propertySubtype || 'PG';
+    if (!propObj.minRent) {
+      if (propObj.roomConfigs?.length > 0) {
+        const rents = propObj.roomConfigs
+          .map((rc) => Number(rc.rent))
+          .filter((r) => !isNaN(r) && r > 0);
+        if (rents.length > 0) propObj.minRent = Math.min(...rents);
+      }
+      if (!propObj.minRent && propObj.pricing?.expectedPrice) {
+        propObj.minRent = propObj.pricing.expectedPrice;
+      }
+    }
+    if (!propObj.rent && propObj.roomConfigs?.length > 0) {
+      const rMap = {};
+      propObj.roomConfigs.forEach((rc) => {
+        const r = Number(rc.rent);
+        if (!isNaN(r) && r > 0 && rc.shareType) rMap[rc.shareType] = r;
+      });
+      if (Object.keys(rMap).length > 0) propObj.rent = rMap;
+    }
+  } else {
+    propObj.name = propObj.name || propObj.title;
+    propObj.facilities = propObj.facilities || propObj.amenities || [];
+    propObj.amenities = propObj.amenities || propObj.facilities || [];
+  }
+
   if (isGuest) {
     if (propObj.contactPhone) {
       const raw = propObj.contactPhone.replace(/\D/g, '');

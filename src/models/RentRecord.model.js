@@ -63,6 +63,9 @@ const rentRecordSchema = new mongoose.Schema(
       required: true,
       min: 2020,
     },
+    // Custom billing period dates (for non-standard cycles)
+    billingPeriodStart: { type: Date, default: null },
+    billingPeriodEnd:   { type: Date, default: null },
     // ─── Amounts ───────────────────────────────────────────────────
     rentAmount: {
       type: Number,
@@ -113,6 +116,21 @@ const rentRecordSchema = new mongoose.Schema(
     },
     // Mark if late fee has been applied
     lateFeeApplied: { type: Boolean, default: false },
+    // ─── Razorpay Payment Link ───────────────────────────────────
+    paymentLink:   { type: String, default: null },
+    paymentLinkId: { type: String, default: null },
+    // ─── Reminder Tracking ───────────────────────────────────────
+    remindersSent: [
+      {
+        channel:  { type: String, enum: ['whatsapp', 'email', 'push', 'sms'], required: true },
+        type:     { type: String, enum: ['due_reminder', 'overdue', 'payment_link', 'receipt'], default: 'due_reminder' },
+        sentAt:   { type: Date, default: Date.now },
+        status:   { type: String, enum: ['sent', 'delivered', 'failed', 'read'], default: 'sent' },
+        sentBy:   { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+        messageId: { type: String, default: null },
+        error:    { type: String, default: null },
+      },
+    ],
   },
   {
     timestamps: true,

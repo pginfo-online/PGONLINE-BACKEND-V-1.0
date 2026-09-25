@@ -14,78 +14,166 @@ const City = require('../models/City.model');
  * the /cities list it already fetches for the city selector).
  */
 
-// ─── GET /api/v1/areas?cityId=<id>&q=<text> ───────────────────────────────────
+const mongoose = require('mongoose');
+
+// In-memory area cache (5-minute TTL)
+const _areaCache = new Map();
+const AREA_CACHE_TTL = 5 * 60 * 1000;
+
+const invalidateAreaCache = (cityId) => {
+  if (cityId) {
+    for (const key of _areaCache.keys()) {
+      if (key.startsWith(String(cityId))) {
+        _areaCache.delete(key);
+      }
+    }
+  } else {
+    _areaCache.clear();
+  }
+};
+
+// ─── GET /api/v1/areas?cityId=<id>&city=<name>&q=<text> ───────────────────────
 /**
  * @route   GET /api/v1/areas
- * @desc    Search active areas for a city, with optional text search.
- *          Returns up to 20 results sorted by relevance (text score) then name.
+ * @desc    Search active areas for a city, accepting cityId OR city name/slug.
+ *          Returns up to 50 results sorted by order then name, with cached property counts.
  * @access  Public
- * @query   cityId  — required, MongoDB ObjectId of the city
- * @query   q       — optional, free-text partial-match filter
  */
 const searchAreas = asyncHandler(async (req, res) => {
-  const { cityId, q } = req.query;
+  const { cityId, city: cityParam, cityName, q, limit: limitStr } = req.query;
 
-  if (!cityId) {
-    return errorResponse(res, 'cityId query parameter is required', 400);
-  }
+  let resolvedCityId = null;
+  let resolvedCityName = null;
 
-  // Validate that the city exists (avoids silently returning nothing for bad IDs)
-  const cityExists = await City.exists({ _id: cityId });
-  if (!cityExists) {
-    return errorResponse(res, 'City not found', 404);
-  }
-
-  const filter = { city: cityId, isActive: true };
-
-  // Apply partial-match name filter when a search term is provided
-  if (q && q.trim().length > 0) {
-    filter.name = { $regex: q.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), $options: 'i' };
-  }
-
-  const PG = require('../models/PG.model');
-
-  const areas = await Area.find(filter)
-    .sort({ order: 1, name: 1 })
-    .select('_id name slug order image')
-    .limit(20)
-    .lean();
-
-  // Aggregate approved PG counts for these areas
-  const areaNames = areas.map((a) => a.name);
-  let pgCountMap = {};
-
-  if (areaNames.length > 0) {
-    try {
-      const counts = await PG.aggregate([
-        {
-          $match: {
-            status: 'approved',
-            area: { $in: areaNames.map((n) => new RegExp(`^${n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i')) },
-          },
-        },
-        {
-          $group: {
-            _id: { $toLower: '$area' },
-            count: { $sum: 1 },
-          },
-        },
-      ]);
-
-      counts.forEach((c) => {
-        pgCountMap[c._id] = c.count;
-      });
-    } catch (err) {
-      console.warn('[AreaController] Failed to aggregate PG counts:', err.message);
+  // 1. If cityId is provided and is a valid ObjectId, lookup by ID
+  if (cityId && mongoose.Types.ObjectId.isValid(cityId)) {
+    const cityDoc = await City.findById(cityId).select('_id name').lean();
+    if (cityDoc) {
+      resolvedCityId = cityDoc._id;
+      resolvedCityName = cityDoc.name;
     }
   }
 
-  const enrichedAreas = areas.map((area) => ({
-    ...area,
-    pgCount: pgCountMap[area.name.toLowerCase()] || 0,
-  }));
+  // 2. If not resolved, search by name or slug (or if cityId was a city name string)
+  if (!resolvedCityId) {
+    const candidate = (cityParam || cityName || cityId || '').trim();
+    if (candidate) {
+      const escaped = candidate.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const cityDoc = await City.findOne({
+        $or: [
+          { name: { $regex: new RegExp(`^${escaped}$`, 'i') } },
+          { slug: candidate.toLowerCase() },
+          { aliases: { $regex: new RegExp(`^${escaped}$`, 'i') } },
+        ],
+      }).select('_id name').lean();
 
-  return successResponse(res, 'Areas retrieved', { areas: enrichedAreas });
+      if (cityDoc) {
+        resolvedCityId = cityDoc._id;
+        resolvedCityName = cityDoc.name;
+      }
+    }
+  }
+
+  if (!resolvedCityId) {
+    return errorResponse(res, 'Valid cityId or city name is required', 400);
+  }
+
+  const cleanQuery = (q || '').trim();
+  const limit = Math.min(100, Math.max(1, parseInt(limitStr, 10) || 30));
+  const cacheKey = `${resolvedCityId}:${cleanQuery.toLowerCase()}:${limit}`;
+
+  const now = Date.now();
+  const cached = _areaCache.get(cacheKey);
+  if (cached && now - cached.timestamp < AREA_CACHE_TTL) {
+    return successResponse(res, 'Areas retrieved (cached)', {
+      areas: cached.data,
+      city: { _id: resolvedCityId, name: resolvedCityName },
+    });
+  }
+
+  const filter = { city: resolvedCityId, isActive: true };
+
+  if (cleanQuery.length > 0) {
+    filter.name = { $regex: cleanQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), $options: 'i' };
+  }
+
+  // When browsing all popular areas for a city without search query, load active areas to rank by property count
+  const rawQuery = Area.find(filter).select('_id name slug order image isAutoCreated');
+  if (cleanQuery.length > 0) {
+    rawQuery.limit(limit);
+  }
+  const rawAreas = await rawQuery.lean();
+
+  // Deduplicate areas by normalized name
+  const seenAreaNames = new Set();
+  const areas = [];
+  for (const a of rawAreas) {
+    const norm = (a.name || '').trim().toLowerCase();
+    if (!seenAreaNames.has(norm)) {
+      seenAreaNames.add(norm);
+      areas.push(a);
+    }
+  }
+
+  // Aggregate property & PG counts for resolved city
+  let countMap = {};
+  try {
+    const PG = require('../models/PG.model');
+    const Property = require('../models/Property.model');
+
+    const [pgCounts, propCounts] = await Promise.allSettled([
+      PG.aggregate([
+        { $match: { city: resolvedCityName } },
+        { $group: { _id: { $toLower: '$area' }, count: { $sum: 1 } } },
+      ]),
+      Property.aggregate([
+        { $match: { city: resolvedCityName } },
+        { $group: { _id: { $toLower: '$area' }, count: { $sum: 1 } } },
+      ]),
+    ]);
+
+    if (pgCounts.status === 'fulfilled') {
+      pgCounts.value.forEach((c) => {
+        countMap[c._id] = (countMap[c._id] || 0) + c.count;
+      });
+    }
+
+    if (propCounts.status === 'fulfilled') {
+      propCounts.value.forEach((c) => {
+        countMap[c._id] = Math.max(countMap[c._id] || 0, c.count);
+      });
+    }
+  } catch (err) {
+    console.warn('[AreaController] Failed to aggregate counts:', err.message);
+  }
+
+  const enrichedAreas = areas.map((area) => {
+    const key = (area.name || '').trim().toLowerCase();
+    const count = countMap[key] || 0;
+    return {
+      ...area,
+      pgCount: count,
+      propertyCount: count,
+    };
+  });
+
+  // Sort areas that actually have properties first, then by admin order, then alphabetically
+  enrichedAreas.sort((a, b) => {
+    const countDiff = (b.propertyCount || 0) - (a.propertyCount || 0);
+    if (countDiff !== 0) return countDiff;
+    const orderDiff = (a.order || 99) - (b.order || 99);
+    if (orderDiff !== 0) return orderDiff;
+    return (a.name || '').localeCompare(b.name || '');
+  });
+
+  const finalAreas = enrichedAreas.slice(0, limit);
+
+  _areaCache.set(cacheKey, { data: finalAreas, timestamp: now });
+
+  return successResponse(res, 'Areas retrieved', {
+    areas: finalAreas,
+    city: { _id: resolvedCityId, name: resolvedCityName },
+  });
 });
 
 // ─── POST /api/v1/areas/find-or-create ────────────────────────────────────────
@@ -100,19 +188,38 @@ const searchAreas = asyncHandler(async (req, res) => {
  * @body    { cityId: string, name: string }
  */
 const findOrCreateArea = asyncHandler(async (req, res) => {
-  const { cityId, name } = req.body;
+  const { cityId, cityName: bodyCityName, city: bodyCityParam, name } = req.body;
 
-  if (!cityId || !name || !name.trim()) {
-    return errorResponse(res, 'cityId and name are required', 400);
+  if ((!cityId && !bodyCityName && !bodyCityParam) || !name || !name.trim()) {
+    return errorResponse(res, 'cityId (or city name) and area name are required', 400);
   }
 
   const trimmedName = name.trim();
 
   // Validate city exists and grab its name for the denormalized cityName field
-  const city = await City.findById(cityId).select('name').lean();
-  if (!city) {
+  let cityDoc = null;
+  if (cityId && mongoose.Types.ObjectId.isValid(cityId)) {
+    cityDoc = await City.findById(cityId).select('_id name').lean();
+  }
+  if (!cityDoc) {
+    const candidate = (bodyCityParam || bodyCityName || cityId || '').trim();
+    if (candidate) {
+      const escaped = candidate.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      cityDoc = await City.findOne({
+        $or: [
+          { name: { $regex: new RegExp(`^${escaped}$`, 'i') } },
+          { slug: candidate.toLowerCase() },
+          { aliases: { $regex: new RegExp(`^${escaped}$`, 'i') } },
+        ],
+      }).select('_id name').lean();
+    }
+  }
+
+  if (!cityDoc) {
     return errorResponse(res, 'City not found', 404);
   }
+
+  const effectiveCityId = cityDoc._id;
 
   // Build the slug the same way Area.model.js does it (keep in sync)
   const slug = trimmedName
@@ -124,13 +231,13 @@ const findOrCreateArea = asyncHandler(async (req, res) => {
   // $setOnInsert only runs on INSERT, so existing documents are never mutated.
   const area = await Area.findOneAndUpdate(
     {
-      city: cityId,
+      city: effectiveCityId,
       name: { $regex: new RegExp(`^${trimmedName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
     },
     {
       $setOnInsert: {
-        city: cityId,
-        cityName: city.name,
+        city: effectiveCityId,
+        cityName: cityDoc.name,
         name: trimmedName,
         slug,
         isActive: true,
@@ -144,6 +251,8 @@ const findOrCreateArea = asyncHandler(async (req, res) => {
       setDefaultsOnInsert: true,
     }
   );
+
+  invalidateAreaCache(effectiveCityId);
 
   // Mongoose upsert does not trigger pre-save hooks — slug is set manually above.
   const wasCreated = !area.createdAt || Date.now() - new Date(area.createdAt).getTime() < 5000;

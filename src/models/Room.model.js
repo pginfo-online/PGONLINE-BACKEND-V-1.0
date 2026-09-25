@@ -60,11 +60,6 @@ const roomSchema = new mongoose.Schema(
     amenities: {
       type: [String],
       default: [],
-      enum: [
-        'AC', 'Fan', 'Attached Bathroom', 'Common Bathroom',
-        'Balcony', 'Wardrobe', 'Study Table', 'Chair', 'Bed',
-        'Mattress', 'Pillow', 'Window', 'CCTV', 'Locker',
-      ],
     },
     // Derived counters — kept in sync by service layer
     occupiedBeds:     { type: Number, default: 0, min: 0 },
@@ -93,6 +88,25 @@ const roomSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+    // ─── Individual Meter ─────────────────────────────────────────
+    hasMeter: {
+      type: Boolean,
+      default: false,
+    },
+    // ─── Floor Label (for room-first UI) ─────────────────────────
+    floorLabel: {
+      type: String,
+      enum: [
+        'ground', 'first', 'second', 'third', 'fourth', 'fifth',
+        'sixth', 'seventh', 'eighth', 'ninth', 'tenth',
+        'eleventh', 'twelfth', 'thirteenth', 'fourteenth', 'fifteenth',
+        'terrace', 'basement',
+      ],
+      default: 'ground',
+    },
+    // ─── Room Image ──────────────────────────────────────────────
+    image:         { type: String, default: null },
+    imagePublicId: { type: String, default: null },
     notes: {
       type: String,
       trim: true,

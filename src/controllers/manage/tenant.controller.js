@@ -7,6 +7,8 @@ const PG      = require('../../models/PG.model');
 const User    = require('../../models/User.model');
 const notificationTrigger = require('../../services/notification/notification.trigger');
 
+const RentRecord = require('../../models/RentRecord.model');
+
 // ─── List Tenants ─────────────────────────────────────────────────────────────
 exports.getTenants = asyncHandler(async (req, res) => {
   const { pgId }  = req.params;
@@ -20,24 +22,61 @@ exports.getTenants = asyncHandler(async (req, res) => {
   const skip  = (page - 1) * limit;
 
   const filter = { pg: pgId, owner: ownerId };
-  if (req.query.status) filter.status = req.query.status;
+  
+  if (req.query.status) {
+    if (req.query.status === 'waiting_to_move') {
+      filter.status = 'pending';
+    } else if (req.query.status === 'moved_out') {
+      filter.status = 'vacated';
+    } else if (req.query.status !== 'all') {
+      filter.status = req.query.status;
+    }
+  }
+  if (req.query.room)      filter.room      = req.query.room;
+  if (req.query.rentCycle) filter.rentCycle = req.query.rentCycle;
   if (req.query.search) {
-    const rx = new RegExp(req.query.search, 'i');
+    const rx = new RegExp(req.query.search.trim(), 'i');
     filter.$or = [{ name: rx }, { phone: rx }, { email: rx }];
   }
 
-  const [tenants, total] = await Promise.all([
+  // Today boundary for today's bookings
+  const startOfDay = new Date();
+  startOfDay.setHours(0, 0, 0, 0);
+
+  const [tenants, total, totalTenants, underNotice, waitingToMove, movedOut, todayBooking, pendingDue] = await Promise.all([
     Tenant.find(filter)
-      .populate('room', 'roomNumber shareType')
+      .populate('room', 'roomNumber shareType floorLabel')
       .populate('bed',  'bedLabel status')
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit),
     Tenant.countDocuments(filter),
+    Tenant.countDocuments({ pg: pgId, owner: ownerId, status: { $in: ['active', 'notice', 'pending'] } }),
+    Tenant.countDocuments({ pg: pgId, owner: ownerId, status: 'notice' }),
+    Tenant.countDocuments({ pg: pgId, owner: ownerId, status: 'pending' }),
+    Tenant.countDocuments({ pg: pgId, owner: ownerId, status: 'vacated' }),
+    Tenant.countDocuments({ pg: pgId, owner: ownerId, createdAt: { $gte: startOfDay } }),
+    RentRecord.countDocuments({ pg: pgId, owner: ownerId, status: { $in: ['pending', 'overdue', 'partial'] } }).catch(() => 0),
   ]);
 
-  return paginatedResponse(res, 'Tenants fetched', tenants, {
-    page, limit, total, pages: Math.ceil(total / limit),
+  return res.status(200).json({
+    success: true,
+    message: 'Tenants fetched',
+    data: tenants,
+    pagination: {
+      page,
+      limit,
+      total,
+      pages: Math.ceil(total / limit),
+    },
+    stats: {
+      totalTenants,
+      pendingDue,
+      underNotice,
+      todayBooking,
+      waitingToMove,
+      movedOut,
+    },
   });
 });
 
@@ -130,10 +169,12 @@ exports.updateTenant = asyncHandler(async (req, res) => {
   if (!tenant) return errorResponse(res, 'Tenant not found or access denied', 404);
 
   const ALLOWED = [
-    'name', 'email', 'phone', 'gender', 'dateOfBirth',
+    'name', 'email', 'phone', 'gender', 'dateOfBirth', 'profilePhoto',
+    'profession', 'aadhaar', 'documents',
     'emergencyContact', 'foodPreference', 'monthlyRent',
     'securityDeposit', 'depositStatus', 'notes', 'status',
     'expectedLeaveDate', 'noticePeriodDays',
+    'lockInPeriodMonths', 'lockInEndDate', 'rentCycle', 'billingDate',
   ];
   ALLOWED.forEach((key) => { if (req.body[key] !== undefined) tenant[key] = req.body[key]; });
 

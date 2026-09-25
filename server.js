@@ -218,6 +218,16 @@ const startServer = async () => {
       startBuffetSchedulers();
       startHotDealScheduler();
       logger.info('✅ Background schedulers active (notification, export, buffet, hot deals)');
+
+      // BullMQ Background Workers for PG Management
+      try {
+        const { initializeWorkers } = require('./src/services/workers/queue.workers');
+        initializeWorkers()
+          .then(() => logger.info('✅ BullMQ workers & repeating jobs active'))
+          .catch((err) => logger.warn(`⚠️ BullMQ worker initialization deferred: ${err.message}`));
+      } catch (err) {
+        logger.warn(`⚠️ BullMQ worker loader warning: ${err.message}`);
+      }
     } else if (!isPrimaryInstance) {
       logger.info(`ℹ️ Schedulers skipped on worker instance ${process.env.NODE_APP_INSTANCE}`);
     }
@@ -273,6 +283,12 @@ const handleGracefulShutdown = async (signal) => {
     if (disconnectDB) {
       await disconnectDB();
     }
+
+    // 3. Gracefully shutdown BullMQ queues and workers
+    try {
+      const { shutdownQueues } = require('./src/config/queue');
+      await shutdownQueues();
+    } catch (_) {}
 
     clearTimeout(shutdownTimeout);
     logger.info('👋 Graceful shutdown completed cleanly');

@@ -4,10 +4,15 @@ const Payment    = require('../../models/Payment.model');
 const RentRecord = require('../../models/RentRecord.model');
 const Tenant     = require('../../models/Tenant.model');
 const PG         = require('../../models/PG.model');
+const User       = require('../../models/User.model');
 const razorpayService = require('../../services/manage/razorpay.service');
 const rentService     = require('../../services/manage/rent.service');
+const receiptService  = require('../../services/manage/receipt.service');
+const whatsappService = require('../../services/notification/whatsapp.service');
+const emailService    = require('../../services/notification/email.service');
 const crypto = require('crypto');
 const notificationTrigger = require('../../services/notification/notification.trigger');
+const { logger } = require('../../utils/logger');
 
 /**
  * Create a Razorpay order for a rent payment (Web only for now).
@@ -302,4 +307,204 @@ exports.recordManualPayment = asyncHandler(async (req, res) => {
 
   notificationTrigger.onManualPaymentRecorded(payment).catch(() => {});
   return successResponse(res, 'Manual payment recorded', payment, 201);
+});
+
+/**
+ * Refund a payment (Full or Partial).
+ * Supports Razorpay automated refunds and manual offline refunds.
+ */
+exports.refundPayment = asyncHandler(async (req, res) => {
+  const payment = await Payment.findOne({ _id: req.params.id, owner: req.user._id });
+  if (!payment) return errorResponse(res, 'Payment not found or access denied', 404);
+
+  if (payment.status === 'refunded') {
+    return errorResponse(res, 'Payment is already fully refunded', 400);
+  }
+
+  const refundAmount = req.body.amount ? Number(req.body.amount) : payment.amount;
+  if (!refundAmount || refundAmount <= 0 || refundAmount > payment.amount) {
+    return errorResponse(res, `Refund amount must be between ₹1 and ₹${payment.amount}`, 400);
+  }
+
+  let razorpayRefund = null;
+
+  // If paid online via Razorpay, trigger Razorpay refund API
+  if (payment.method === 'razorpay' && payment.razorpayPaymentId) {
+    try {
+      razorpayRefund = await razorpayService.createRefund(
+        payment.razorpayPaymentId,
+        refundAmount * 100, // in paise
+        { reason: req.body.reason || 'Customer request' }
+      );
+    } catch (err) {
+      logger.error(`[Refund] Razorpay refund failed: ${err.message}`);
+      return errorResponse(res, `Razorpay refund failed: ${err.message}`, 500);
+    }
+  }
+
+  // Update payment status
+  const isFullRefund = refundAmount >= payment.amount;
+  payment.status = isFullRefund ? 'refunded' : 'partially_refunded';
+  payment.notes = (payment.notes ? `${payment.notes}\n` : '') +
+    `Refunded ₹${refundAmount} on ${new Date().toISOString()}. Reason: ${req.body.reason || 'N/A'}`;
+  await payment.save();
+
+  // If payment was linked to a RentRecord, adjust rent record
+  if (payment.rentRecord) {
+    const record = await RentRecord.findById(payment.rentRecord);
+    if (record) {
+      record.paidAmount = Math.max(0, record.paidAmount - refundAmount);
+      record.status = record.paidAmount >= record.totalAmount ? 'paid' : (record.paidAmount > 0 ? 'partial' : 'pending');
+      record.paymentHistory.push({
+        amount: -refundAmount,
+        paidAt: new Date(),
+        method: payment.method || 'cash',
+        reference: razorpayRefund?.id || `refund_${Date.now()}`,
+        notes: `Refund: ${req.body.reason || 'Payment refunded'}`,
+      });
+      await record.save();
+    }
+  }
+
+  return successResponse(res, 'Payment refunded successfully', {
+    paymentId: payment._id,
+    refundAmount,
+    status: payment.status,
+    razorpayRefundId: razorpayRefund?.id || null,
+  });
+});
+
+/**
+ * Get Receipt for a payment.
+ */
+exports.getReceipt = asyncHandler(async (req, res) => {
+  const payment = await Payment.findById(req.params.id)
+    .populate('tenant')
+    .populate('pg');
+
+  if (!payment) return errorResponse(res, 'Payment not found', 404);
+
+  const isOwner = payment.owner.toString() === req.user._id.toString();
+  const isTenant = payment.tenant?.user && payment.tenant.user.toString() === req.user._id.toString();
+  if (!isOwner && !isTenant) {
+    return errorResponse(res, 'Not authorized to access this receipt', 403);
+  }
+
+  // If linked to rent record with existing invoice
+  if (payment.rentRecord) {
+    const rentRecord = await RentRecord.findById(payment.rentRecord);
+    if (rentRecord?.invoiceUrl) {
+      return successResponse(res, 'Receipt fetched', {
+        receiptUrl: rentRecord.invoiceUrl,
+        invoiceNumber: rentRecord.invoiceNumber,
+      });
+    }
+  }
+
+  // Generate on demand
+  const owner = await User.findById(payment.owner);
+  const receiptResult = await receiptService.generateAndStoreReceipt({
+    tenantName:    payment.tenant?.name || 'Tenant',
+    tenantPhone:   payment.tenant?.phone || '',
+    pgName:        payment.pg?.name || '',
+    pgAddress:     payment.pg?.address || '',
+    ownerName:     owner?.name || '',
+    billingMonth:  new Date(payment.createdAt).getMonth() + 1,
+    billingYear:   new Date(payment.createdAt).getFullYear(),
+    rentAmount:    payment.amount,
+    paidAmount:    payment.amount,
+    paymentMethod: payment.method || 'online',
+    reference:     payment.razorpayPaymentId || payment._id.toString(),
+  });
+
+  return successResponse(res, 'Receipt generated', {
+    receiptUrl: receiptResult.receiptUrl,
+    invoiceNumber: receiptResult.receiptNumber,
+  });
+});
+
+/**
+ * Generate Razorpay payment link directly for any payment (rent, deposit, charges).
+ */
+exports.createPaymentLink = asyncHandler(async (req, res) => {
+  const { tenantId, rentRecordId, amount, description, sendWhatsApp = true, sendEmail = true } = req.body;
+  const ownerId = req.user._id;
+
+  let tenant = null;
+  let rentRecord = null;
+  let pg = null;
+
+  if (tenantId) {
+    tenant = await Tenant.findOne({ _id: tenantId, owner: ownerId }).populate('pg');
+    if (!tenant) return errorResponse(res, 'Tenant not found or access denied', 404);
+    pg = tenant.pg;
+  }
+
+  if (rentRecordId) {
+    rentRecord = await RentRecord.findOne({ _id: rentRecordId, owner: ownerId }).populate('pg').populate('tenant');
+    if (!rentRecord) return errorResponse(res, 'Rent record not found or access denied', 404);
+    tenant = tenant || rentRecord.tenant;
+    pg = pg || rentRecord.pg;
+  }
+
+  const payAmount = Number(amount || (rentRecord ? rentRecord.totalAmount - rentRecord.paidAmount : 0));
+  if (!payAmount || payAmount <= 0) {
+    return errorResponse(res, 'Valid payment amount is required', 400);
+  }
+
+  try {
+    const paymentLink = await razorpayService.createPaymentLink({
+      amount: Math.round(payAmount * 100), // in paise
+      description: description || `Payment for ${pg?.name || 'PG'}`,
+      customer: {
+        name:    tenant?.name || 'Tenant',
+        email:   tenant?.email || undefined,
+        contact: tenant?.phone || undefined,
+      },
+      notes: {
+        ownerId:      ownerId.toString(),
+        pgId:         pg?._id?.toString() || '',
+        tenantId:     tenant?._id?.toString() || '',
+        rentRecordId: rentRecord?._id?.toString() || '',
+      },
+    });
+
+    // If linked to rent record, store on it
+    if (rentRecord) {
+      await rentService.setPaymentLink(rentRecord._id, paymentLink.short_url, paymentLink.id);
+    }
+
+    // Optionally notify via WhatsApp
+    if (sendWhatsApp && tenant?.phone) {
+      whatsappService.sendRentReminder(tenant.phone, {
+        tenantName:  tenant.name,
+        amount:      String(payAmount),
+        dueDate:     rentRecord?.dueDate ? new Date(rentRecord.dueDate).toLocaleDateString('en-IN') : 'Immediately',
+        paymentLink: paymentLink.short_url,
+        pgName:      pg?.name || 'PG',
+      }).catch((e) => logger.warn(`[PaymentLink] WhatsApp notification failed: ${e.message}`));
+    }
+
+    // Optionally notify via Email
+    if (sendEmail && tenant?.email) {
+      emailService.sendRentReminderEmail(tenant.email, {
+        tenantName:   tenant.name,
+        amount:       payAmount,
+        dueDate:      rentRecord?.dueDate ? new Date(rentRecord.dueDate).toLocaleDateString('en-IN') : 'Immediately',
+        billingMonth: rentRecord?.billingMonth || new Date().getMonth() + 1,
+        billingYear:  rentRecord?.billingYear || new Date().getFullYear(),
+        paymentLink:  paymentLink.short_url,
+        pgName:       pg?.name || 'PG',
+      }).catch((e) => logger.warn(`[PaymentLink] Email notification failed: ${e.message}`));
+    }
+
+    return successResponse(res, 'Payment link created successfully', {
+      paymentLink:   paymentLink.short_url,
+      paymentLinkId: paymentLink.id,
+      amount:        payAmount,
+    });
+  } catch (err) {
+    logger.error(`[PaymentLink] Failed to create payment link: ${err.message}`);
+    return errorResponse(res, `Failed to create payment link: ${err.message}`, 500);
+  }
 });

@@ -89,6 +89,12 @@ const tenantSchema = new mongoose.Schema(
       default: null,
     },
     dateOfBirth: { type: Date, default: null },
+    // ─── Profession ───────────────────────────────────────────────
+    profession: {
+      type: String,
+      enum: ['student', 'working_professional', 'self_employed', 'other'],
+      default: null,
+    },
     // ─── ID Documents ──────────────────────────────────────────────
     aadhaar: { type: String, trim: true, default: null },
     documents: [
@@ -109,6 +115,26 @@ const tenantSchema = new mongoose.Schema(
     expectedLeaveDate: { type: Date, default: null },
     actualLeaveDate:   { type: Date, default: null },
     noticePeriodDays:  { type: Number, default: 30, min: 0 },
+    // ─── Lock-in Period ─────────────────────────────────────────
+    lockInPeriodMonths: {
+      type: Number,
+      enum: [0, 1, 3, 6],
+      default: 0,
+    },
+    lockInEndDate: { type: Date, default: null },
+    // ─── Billing Configuration ─────────────────────────────────
+    rentCycle: {
+      type: String,
+      enum: ['standard', 'custom'],
+      default: 'standard',
+    },
+    // Custom billing date (1-28). Standard = 1st of month.
+    billingDate: {
+      type: Number,
+      min: 1,
+      max: 28,
+      default: 1,
+    },
     // Monthly rent agreed at time of joining
     monthlyRent: {
       type: Number,

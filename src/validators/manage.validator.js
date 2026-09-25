@@ -20,13 +20,24 @@ const createFloorSchema = z.object({
 
 const updateFloorSchema = createFloorSchema.partial();
 
+const VALID_FLOOR_LABELS = [
+  'ground', 'first', 'second', 'third', 'fourth', 'fifth',
+  'sixth', 'seventh', 'eighth', 'ninth', 'tenth',
+  'eleventh', 'twelfth', 'thirteenth', 'fourteenth', 'fifteenth',
+  'terrace', 'basement',
+];
+
 // Room validation schemas
 const createRoomSchema = z.object({
   roomNumber: z.string().min(1, 'Room number required').max(20),
-  shareType: z.enum(['single', 'double', 'triple', 'four', 'dormitory']),
-  totalBeds: z.number().int().min(1, 'Must have at least 1 bed').max(12),
-  rentPerBed: z.number().min(0, 'Rent cannot be negative').optional(),
-  depositAmount: z.number().min(0, 'Deposit cannot be negative').optional(),
+  shareType: z.enum(['single', 'double', 'triple', 'four', 'dormitory']).default('double'),
+  totalBeds: z.preprocess((v) => (v !== undefined && v !== null ? Number(v) : 1), z.number().int().min(1, 'Must have at least 1 bed').max(12)),
+  rentPerBed: z.preprocess((v) => (v !== undefined && v !== null ? Number(v) : 0), z.number().min(0, 'Rent cannot be negative')).optional(),
+  depositAmount: z.preprocess((v) => (v !== undefined && v !== null ? Number(v) : 0), z.number().min(0, 'Deposit cannot be negative')).optional(),
+  floorLabel: z.enum(VALID_FLOOR_LABELS).default('ground'),
+  hasMeter: z.boolean().optional(),
+  image: z.string().optional().nullable(),
+  imagePublicId: z.string().optional().nullable(),
   roomSize: z.string().max(100).optional(),
   bathroomType: z.enum(['attached', 'common', 'shared']).optional(),
   acIncluded: z.boolean().optional(),
@@ -37,6 +48,28 @@ const createRoomSchema = z.object({
 });
 
 const updateRoomSchema = createRoomSchema.partial();
+
+// Room-first API creation schema (flattens hierarchy, building/floor optional)
+const createPGRoomSchema = z.object({
+  roomNumber: z.string().min(1, 'Room number required').max(20),
+  shareType: z.enum(['single', 'double', 'triple', 'four', 'dormitory']).default('double'),
+  totalBeds: z.preprocess((v) => (v !== undefined && v !== null ? Number(v) : 1), z.number().int().min(1, 'Must have at least 1 bed').max(12)).optional(),
+  rentPerBed: z.preprocess((v) => (v !== undefined && v !== null ? Number(v) : 0), z.number().min(0, 'Rent cannot be negative')),
+  depositAmount: z.preprocess((v) => (v !== undefined && v !== null ? Number(v) : 0), z.number().min(0, 'Deposit cannot be negative')).optional(),
+  floorLabel: z.enum(VALID_FLOOR_LABELS).default('ground'),
+  hasMeter: z.boolean().optional().default(false),
+  image: z.string().optional().nullable(),
+  imagePublicId: z.string().optional().nullable(),
+  roomSize: z.string().max(100).optional(),
+  bathroomType: z.enum(['attached', 'common', 'shared']).optional().default('attached'),
+  acIncluded: z.boolean().optional().default(false),
+  furnitureIncluded: z.boolean().optional().default(true),
+  status: z.enum(['active', 'inactive', 'maintenance', 'renovation']).optional().default('active'),
+  amenities: z.array(z.string()).optional(),
+  notes: z.string().max(500).optional(),
+  buildingId: z.string().optional(),
+  floorId: z.string().optional(),
+});
 
 // Bed validation schemas
 const updateBedSchema = z.object({
@@ -53,10 +86,15 @@ const addTenantSchema = z.object({
   phone: z.string().regex(/^[6-9]\d{9}$/, 'Invalid Indian mobile number'),
   gender: z.enum(['male', 'female', 'other']).optional(),
   dateOfBirth: z.string().optional().nullable(),
+  profession: z.enum(['student', 'working_professional', 'self_employed', 'other']).optional().nullable(),
   joinDate: z.string().min(1, 'Join date required'),
-  monthlyRent: z.number().min(0, 'Rent required'),
-  securityDeposit: z.number().min(0).optional(),
+  monthlyRent: z.preprocess((val) => (val !== undefined && val !== null ? Number(val) : 0), z.number().min(0, 'Monthly rent must be 0 or more')),
+  securityDeposit: z.preprocess((val) => (val !== undefined && val !== null ? Number(val) : 0), z.number().min(0).optional()),
   depositStatus: z.enum(['pending', 'received', 'refunded', 'partial']).optional(),
+  lockInPeriodMonths: z.preprocess((val) => (val !== undefined && val !== null ? Number(val) : 0), z.number().int().min(0).max(24)).optional(),
+  lockInEndDate: z.string().optional().nullable(),
+  rentCycle: z.enum(['standard', 'custom']).optional().default('standard'),
+  billingDate: z.preprocess((val) => (val !== undefined && val !== null ? Number(val) : 1), z.number().int().min(1).max(28)).optional().default(1),
   foodPreference: z.enum(['veg', 'nonveg', 'eggetarian', 'none']).optional(),
   notes: z.string().max(1000).optional(),
   // Optional Bed / Room Assignment at creation
@@ -151,12 +189,49 @@ const markRentPaidSchema = z.preprocess((data) => {
   notes: z.string().optional(),
 }));
 
+const updateRentRecordSchema = z.object({
+  rentAmount: z.number().min(0).optional(),
+  lateFee: z.number().min(0).optional(),
+  discount: z.number().min(0).optional(),
+  additionalCharges: z.array(z.object({
+    description: z.string().min(1),
+    amount: z.number().min(0),
+  })).optional(),
+  dueDate: z.string().optional(),
+  billingPeriodStart: z.string().optional().nullable(),
+  billingPeriodEnd: z.string().optional().nullable(),
+  status: z.enum(['pending', 'partial', 'paid', 'overdue', 'waived']).optional(),
+  notes: z.string().max(500).optional(),
+});
+
+const sendReminderSchema = z.object({
+  channel: z.enum(['whatsapp', 'email', 'push', 'sms', 'all']).default('whatsapp'),
+  type: z.enum(['due_reminder', 'overdue', 'payment_link', 'receipt', 'custom']).default('due_reminder'),
+  customMessage: z.string().max(500).optional(),
+});
+
+const refundPaymentSchema = z.object({
+  amount: z.number().min(1, 'Refund amount must be at least ₹1').optional(),
+  reason: z.string().max(300).optional(),
+  notes: z.string().optional(),
+});
+
+const createPaymentLinkSchema = z.object({
+  rentRecordId: z.string().optional(),
+  tenantId: z.string().optional(),
+  amount: z.number().min(1, 'Amount required'),
+  description: z.string().optional(),
+  sendWhatsApp: z.boolean().optional().default(true),
+  sendEmail: z.boolean().optional().default(true),
+});
+
 // Expense validation schemas
 const addExpenseSchema = z.object({
   category: z.enum([
-    'maintenance', 'utilities', 'staff_salary', 'food', 'cleaning',
-    'security', 'internet', 'rent', 'furniture', 'equipment',
-    'taxes', 'insurance', 'marketing', 'other',
+    'maintenance', 'utilities', 'electricity', 'water', 'staff_salary', 'salary',
+    'food', 'groceries', 'cleaning', 'housekeeping', 'repairs', 'security',
+    'internet', 'rent', 'furniture', 'equipment', 'taxes', 'insurance',
+    'marketing', 'gas', 'miscellaneous', 'other',
   ]),
   subcategory: z.string().optional(),
   description: z.string().min(2).max(500),
@@ -233,10 +308,11 @@ const updateAgreementSchema = z.object({
 module.exports = {
   createBuildingSchema, updateBuildingSchema,
   createFloorSchema, updateFloorSchema,
-  createRoomSchema, updateRoomSchema, updateBedSchema,
+  createRoomSchema, updateRoomSchema, createPGRoomSchema, updateBedSchema,
   addTenantSchema, updateTenantSchema,
   addStaffSchema, updateStaffSchema,
-  generateRentSchema, markRentPaidSchema,
+  generateRentSchema, markRentPaidSchema, updateRentRecordSchema, sendReminderSchema,
+  refundPaymentSchema, createPaymentLinkSchema,
   addExpenseSchema,
   createJobPostSchema, applyJobSchema,
   createAgreementSchema, updateAgreementSchema,

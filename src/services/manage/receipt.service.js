@@ -2,6 +2,7 @@ const PDFDocument = require('pdfkit');
 const cloudinary  = require('cloudinary').v2;
 const stream      = require('stream');
 const Payment     = require('../../models/Payment.model');
+const { logger }  = require('../../utils/logger');
 
 /**
  * Receipt Service
@@ -247,7 +248,7 @@ const generateAndStoreReceipt = async ({
       receiptNumber,
     };
   } catch (err) {
-    console.error(`[ReceiptService] Failed to generate receipt: ${err.message}`);
+    logger.error(`[ReceiptService] Failed to generate receipt: ${err.message}`);
     return null;
   }
 };

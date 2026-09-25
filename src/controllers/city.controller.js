@@ -31,20 +31,98 @@ const deleteCityImageSafe = async (publicId) => {
   }
 };
 
+// ─── In-Memory Cache with TTL ────────────────────────────────────────────────
+let _citiesCache = null;
+let _citiesCacheTime = 0;
+const CITIES_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+const invalidateCityCache = () => {
+  _citiesCache = null;
+  _citiesCacheTime = 0;
+};
+
 // ─── Public Controllers ───────────────────────────────────────────────────────
 
 /**
  * @route  GET /api/v1/cities
- * @desc   Get all active cities sorted by order — consumed by mobile city selector
+ * @desc   Get active cities with server-side search, pagination, deduplication, and caching.
  * @access Public
  */
 const getCities = asyncHandler(async (req, res) => {
-  const cities = await City.find({ isActive: true })
-    .sort({ order: 1, name: 1 })
-    .select('name slug image state country description order aliases')
-    .lean();
+  const { q, page: pageStr, limit: limitStr, popularOnly, all } = req.query;
 
-  successResponse(res, 'Cities retrieved', { cities });
+  const isSearchOrPaginated = Boolean(q || pageStr || limitStr || popularOnly);
+  const returnAll = all === 'true' || all === true;
+
+  // Use fast in-memory cache for the default full list (when not searching or paginating)
+  const now = Date.now();
+  if (!isSearchOrPaginated && returnAll && _citiesCache && now - _citiesCacheTime < CITIES_CACHE_TTL) {
+    return successResponse(res, 'Cities retrieved (cached)', {
+      cities: _citiesCache,
+      pagination: {
+        total: _citiesCache.length,
+        page: 1,
+        limit: _citiesCache.length,
+        totalPages: 1,
+        hasNext: false,
+        hasPrev: false,
+      },
+    });
+  }
+
+  const filter = { isActive: true };
+
+  if (q && q.trim().length > 0) {
+    const escaped = q.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(escaped, 'i');
+    filter.$or = [{ name: regex }, { aliases: regex }, { state: regex }];
+  }
+
+  if (popularOnly === 'true' || popularOnly === true) {
+    filter.order = { $lte: 20 };
+  }
+
+  const page = Math.max(1, parseInt(pageStr, 10) || 1);
+  const limit = returnAll ? 200 : Math.min(100, Math.max(1, parseInt(limitStr, 10) || 24));
+  const skip = (page - 1) * limit;
+
+  const [rawCities, total] = await Promise.all([
+    City.find(filter)
+      .sort({ order: 1, name: 1 })
+      .select('_id name slug image state country description order aliases')
+      .skip(returnAll ? 0 : skip)
+      .limit(limit)
+      .lean(),
+    City.countDocuments(filter),
+  ]);
+
+  // Defensive deduplication by normalized lowercase name
+  const seenNames = new Set();
+  const cities = [];
+  for (const c of rawCities) {
+    const norm = (c.name || '').trim().toLowerCase();
+    if (!seenNames.has(norm)) {
+      seenNames.add(norm);
+      cities.push(c);
+    }
+  }
+
+  // Update default cache if this was an unbounded request
+  if (!isSearchOrPaginated && returnAll) {
+    _citiesCache = cities;
+    _citiesCacheTime = now;
+  }
+
+  const pagination = {
+    total,
+    page,
+    limit,
+    totalPages: Math.max(1, Math.ceil(total / limit)),
+    hasNext: page * limit < total,
+    hasPrev: page > 1,
+  };
+
+  successResponse(res, 'Cities retrieved', { cities, pagination });
 });
 
 /**
@@ -54,7 +132,7 @@ const getCities = asyncHandler(async (req, res) => {
  * @access Public
  */
 const searchCities = asyncHandler(async (req, res) => {
-  const { q, state, country } = req.query;
+  const { q, state, country, limit: limitStr } = req.query;
 
   const filter = { isActive: true };
 
@@ -72,11 +150,24 @@ const searchCities = asyncHandler(async (req, res) => {
     filter.country = { $regex: new RegExp(country.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') };
   }
 
-  const cities = await City.find(filter)
+  const limit = Math.min(50, Math.max(1, parseInt(limitStr, 10) || 20));
+
+  const rawCities = await City.find(filter)
     .sort({ order: 1, name: 1 })
-    .select('name slug image state country description order aliases')
-    .limit(20)
+    .select('_id name slug image state country description order aliases')
+    .limit(limit)
     .lean();
+
+  // Deduplicate
+  const seenNames = new Set();
+  const cities = [];
+  for (const c of rawCities) {
+    const norm = (c.name || '').trim().toLowerCase();
+    if (!seenNames.has(norm)) {
+      seenNames.add(norm);
+      cities.push(c);
+    }
+  }
 
   successResponse(res, 'City search results', { cities });
 });
@@ -131,6 +222,8 @@ const createCity = asyncHandler(async (req, res) => {
     image,
   });
 
+  invalidateCityCache();
+
   successResponse(res, 'City created successfully', { city }, 201);
 });
 
@@ -175,6 +268,7 @@ const updateCity = asyncHandler(async (req, res) => {
   }
 
   await city.save();
+  invalidateCityCache();
 
   successResponse(res, 'City updated successfully', { city });
 });
@@ -194,6 +288,7 @@ const deleteCity = asyncHandler(async (req, res) => {
   await deleteCityImageSafe(city.image?.publicId);
 
   await City.findByIdAndDelete(req.params.id);
+  invalidateCityCache();
 
   successResponse(res, 'City deleted successfully');
 });
@@ -211,6 +306,7 @@ const toggleCityStatus = asyncHandler(async (req, res) => {
 
   city.isActive = !city.isActive;
   await city.save();
+  invalidateCityCache();
 
   successResponse(res, `City ${city.isActive ? 'activated' : 'deactivated'}`, { city });
 });

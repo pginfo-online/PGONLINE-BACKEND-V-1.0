@@ -108,10 +108,60 @@ const createRefund = async (paymentId, amount = null, notes = {}) => {
   return await razorpay.payments.refund(paymentId, params);
 };
 
+/**
+ * Create a Razorpay Payment Link.
+ *
+ * @param {object} params
+ * @param {number} params.amount - In paise (₹1 = 100 paise)
+ * @param {string} [params.currency='INR']
+ * @param {string} params.description
+ * @param {object} [params.customer] - { name, email, contact }
+ * @param {object} [params.notes]
+ * @param {string} [params.callbackUrl]
+ * @param {number} [params.expireBy] - Unix timestamp
+ * @returns {object} Razorpay payment link entity { id, short_url, status, ... }
+ */
+const createPaymentLink = async ({ amount, currency = 'INR', description, customer = {}, notes = {}, callbackUrl, expireBy }) => {
+  if (!amount || amount < 100) {
+    throw new Error('Minimum payment link amount is ₹1 (100 paise)');
+  }
+
+  const razorpay = getRazorpayInstance();
+  const payload = {
+    amount: Math.round(amount),
+    currency,
+    description: description || 'PG Rent Payment',
+    customer: {
+      name: customer.name || 'Tenant',
+      email: customer.email || undefined,
+      contact: customer.contact ? (customer.contact.startsWith('+91') ? customer.contact : `+91${customer.contact.replace(/\D/g, '').slice(-10)}`) : undefined,
+    },
+    notify: {
+      sms: Boolean(customer.contact),
+      email: Boolean(customer.email),
+    },
+    reminder_enable: true,
+    notes,
+  };
+
+  if (callbackUrl) {
+    payload.callback_url = callbackUrl;
+    payload.callback_method = 'get';
+  }
+
+  if (expireBy) {
+    payload.expire_by = expireBy;
+  }
+
+  return await razorpay.paymentLink.create(payload);
+};
+
 module.exports = {
   createOrder,
   verifyPaymentSignature,
   verifyWebhookSignature,
   fetchPayment,
   createRefund,
+  createPaymentLink,
 };
+

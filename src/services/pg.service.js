@@ -109,7 +109,9 @@ const buildSearchQuery = (params) => {
  */
 const buildSort = (sort) => {
   switch (sort) {
+    case 'price_asc':
     case 'rent_asc':  return { 'roomConfigs.rent': 1, createdAt: -1 };
+    case 'price_desc':
     case 'rent_desc': return { 'roomConfigs.rent': -1, createdAt: -1 };
     case 'popular':   return { views: -1, inquiries: -1 };
     case 'distance':  return null; // handled implicitly by $geoNear

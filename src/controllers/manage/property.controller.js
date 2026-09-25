@@ -283,10 +283,14 @@ exports.getRooms = asyncHandler(async (req, res) => {
 });
 
 exports.getRoom = asyncHandler(async (req, res) => {
-  const room = await Room.findOne({ _id: req.params.id, owner: req.user._id });
+  const room = await Room.findOne({ _id: req.params.id, owner: req.user._id })
+    .populate('building', 'name')
+    .populate('floor', 'name floorNumber');
   if (!room) return errorResponse(res, 'Room not found or access denied', 404);
 
-  const beds = await Bed.find({ room: room._id }).sort({ bedLabel: 1 });
+  const beds = await Bed.find({ room: room._id })
+    .populate('currentTenant', 'name phone email profilePhoto status joinDate')
+    .sort({ bedLabel: 1 });
   return successResponse(res, 'Room fetched', { room, beds });
 });
 
@@ -297,6 +301,7 @@ exports.updateRoom = asyncHandler(async (req, res) => {
   const ALLOWED = [
     'roomNumber', 'shareType', 'rentPerBed', 'depositAmount', 'roomSize',
     'bathroomType', 'acIncluded', 'furnitureIncluded', 'status', 'amenities', 'notes',
+    'floorLabel', 'hasMeter', 'image', 'imagePublicId',
   ];
   ALLOWED.forEach((key) => { if (req.body[key] !== undefined) room[key] = req.body[key]; });
 
@@ -461,6 +466,228 @@ exports.getAvailability = asyncHandler(async (req, res) => {
     overall:    summary || { total: 0, vacant: 0, occupied: 0, reserved: 0, maintenance: 0 },
     byBuilding,
   });
+});
+
+// ─── Room-First: Get All Rooms for a PG ───────────────────────────────────────
+exports.getPGRooms = asyncHandler(async (req, res) => {
+  const { pgId } = req.params;
+  const ownerId  = req.user._id;
+
+  const pg = await PG.findOne({ _id: pgId, owner: ownerId });
+  if (!pg) return errorResponse(res, 'PG not found or access denied', 404);
+
+  const filter = { pg: pgId, owner: ownerId };
+  
+  // Operational status (active, maintenance, renovation)
+  const occupancyFilterParam = req.query.occupancyStatus || req.query.status || req.query.filter;
+  if (req.query.status && ['active', 'inactive', 'maintenance', 'renovation'].includes(req.query.status)) {
+    filter.status = req.query.status;
+  }
+  if (req.query.floorLabel) {
+    filter.floorLabel = req.query.floorLabel;
+  }
+  if (req.query.shareType) {
+    filter.shareType = req.query.shareType;
+  }
+  if (req.query.search) {
+    const q = req.query.search.trim();
+    filter.$or = [
+      { roomNumber: { $regex: q, $options: 'i' } },
+      { floorLabel: { $regex: q, $options: 'i' } },
+    ];
+  }
+
+  const rooms = await Room.find(filter)
+    .populate('building', 'name')
+    .populate('floor', 'name floorNumber')
+    .sort({ roomNumber: 1 })
+    .lean();
+
+  // Attach bed details and active tenants to each room
+  const roomIds = rooms.map((r) => r._id);
+  const beds = await Bed.find({ room: { $in: roomIds } })
+    .populate('currentTenant', 'name phone email profilePhoto status joinDate')
+    .sort({ bedLabel: 1 })
+    .lean();
+
+  const bedsByRoom = {};
+  for (const bed of beds) {
+    const rId = bed.room.toString();
+    if (!bedsByRoom[rId]) bedsByRoom[rId] = [];
+    bedsByRoom[rId].push(bed);
+  }
+
+  const allEnrichedRooms = rooms.map((room) => {
+    const roomBeds = bedsByRoom[room._id.toString()] || [];
+    const occupied = roomBeds.filter((b) => b.status === 'occupied').length;
+    const vacant = roomBeds.filter((b) => b.status === 'vacant').length;
+    return {
+      ...room,
+      beds: roomBeds,
+      occupiedBeds: occupied,
+      vacantBeds: vacant,
+      occupancyStatus: occupied === 0 ? 'vacant' : occupied >= roomBeds.length && roomBeds.length > 0 ? 'occupied' : 'partial',
+    };
+  });
+
+  // Calculate summary stats across all PG rooms
+  const totalRooms = allEnrichedRooms.length;
+  const occupiedRooms = allEnrichedRooms.filter((r) => r.occupancyStatus === 'occupied').length;
+  const vacantRooms = allEnrichedRooms.filter((r) => r.occupancyStatus === 'vacant').length;
+  const partialRooms = allEnrichedRooms.filter((r) => r.occupancyStatus === 'partial').length;
+  const totalBeds = beds.length;
+  const occupiedBeds = beds.filter((b) => b.status === 'occupied').length;
+  const vacantBeds = beds.filter((b) => b.status === 'vacant').length;
+
+  // Filter enriched rooms by occupancy tab if requested
+  let displayedRooms = allEnrichedRooms;
+  if (occupancyFilterParam && occupancyFilterParam !== 'all') {
+    if (occupancyFilterParam === 'vacant') {
+      displayedRooms = allEnrichedRooms.filter((r) => r.occupancyStatus === 'vacant' || r.vacantBeds > 0);
+    } else if (occupancyFilterParam === 'occupied') {
+      displayedRooms = allEnrichedRooms.filter((r) => r.occupancyStatus === 'occupied');
+    } else if (occupancyFilterParam === 'partial') {
+      displayedRooms = allEnrichedRooms.filter((r) => r.occupancyStatus === 'partial');
+    }
+  }
+
+  return successResponse(res, 'Rooms fetched successfully', {
+    rooms: displayedRooms,
+    stats: {
+      totalRooms,
+      occupiedRooms,
+      vacantRooms,
+      partialRooms,
+      totalBeds,
+      occupiedBeds,
+      vacantBeds,
+      occupancyRate: totalBeds > 0 ? Math.round((occupiedBeds / totalBeds) * 100) : 0,
+    },
+  });
+});
+
+// ─── Room-First: Create Room Directly under PG (Auto-manage Building/Floor) ────
+exports.createPGRoom = asyncHandler(async (req, res) => {
+  const { pgId } = req.params;
+  const ownerId  = req.user._id;
+
+  const pg = await PG.findOne({ _id: pgId, owner: ownerId });
+  if (!pg) return errorResponse(res, 'PG not found or access denied', 404);
+
+  // 1. Resolve Building: if buildingId is passed, verify it; otherwise find or create default building
+  let buildingId = req.body.buildingId || req.body.building;
+  let building = null;
+
+  if (buildingId) {
+    building = await Building.findOne({ _id: buildingId, pg: pgId, owner: ownerId });
+  }
+
+  if (!building) {
+    building = await Building.findOne({ pg: pgId, owner: ownerId });
+    if (!building) {
+      building = await Building.create({
+        pg: pgId,
+        owner: ownerId,
+        name: 'Main Building',
+        totalFloors: 1,
+        status: 'active',
+      });
+    }
+  }
+
+  // 2. Resolve Floor: if floorId is passed, verify it; otherwise find or create by floorLabel / number
+  const floorLabel = req.body.floorLabel || 'ground';
+  const FLOOR_NUMBER_MAP = {
+    basement: 0, ground: 1, first: 2, second: 3, third: 4,
+    fourth: 5, fifth: 6, sixth: 7, seventh: 8, eighth: 9,
+    ninth: 10, tenth: 11, eleventh: 12, twelfth: 13, thirteenth: 14,
+    fourteenth: 15, fifteenth: 16, terrace: 17,
+  };
+  const targetFloorNum = FLOOR_NUMBER_MAP[floorLabel] || 1;
+
+  let floorId = req.body.floorId || req.body.floor;
+  let floor = null;
+
+  if (floorId) {
+    floor = await Floor.findOne({ _id: floorId, building: building._id, owner: ownerId });
+  }
+
+  if (!floor) {
+    floor = await Floor.findOne({ building: building._id, floorNumber: targetFloorNum });
+    if (!floor) {
+      const floorName = floorLabel.charAt(0).toUpperCase() + floorLabel.slice(1) + ' Floor';
+      floor = await Floor.create({
+        building: building._id,
+        pg: pgId,
+        owner: ownerId,
+        floorNumber: targetFloorNum,
+        name: floorName,
+        status: 'active',
+      });
+      const totalFloors = await Floor.countDocuments({ building: building._id });
+      building.totalFloors = Math.max(building.totalFloors || 0, totalFloors);
+      await building.save();
+    }
+  }
+
+  // 3. Resolve bed count: default based on shareType
+  const SHARE_BEDS_MAP = { single: 1, double: 2, triple: 3, four: 4, dormitory: 6 };
+  const shareType = req.body.shareType || 'double';
+  const totalBeds = req.body.totalBeds !== undefined
+    ? Number(req.body.totalBeds)
+    : (SHARE_BEDS_MAP[shareType] || 2);
+
+  // Check if room number already exists in this building
+  const existingRoom = await Room.findOne({ building: building._id, roomNumber: req.body.roomNumber });
+  if (existingRoom) {
+    return errorResponse(res, `Room ${req.body.roomNumber} already exists in ${building.name}`, 400);
+  }
+
+  // 4. Create Room
+  const room = await Room.create({
+    pg:                pgId,
+    building:          building._id,
+    floor:             floor._id,
+    owner:             ownerId,
+    roomNumber:        req.body.roomNumber,
+    shareType,
+    totalBeds,
+    occupiedBeds:      0,
+    vacantBeds:        totalBeds,
+    rentPerBed:        req.body.rentPerBed,
+    depositAmount:     req.body.depositAmount || 0,
+    floorLabel,
+    hasMeter:          req.body.hasMeter || false,
+    image:             req.body.image || null,
+    imagePublicId:     req.body.imagePublicId || null,
+    roomSize:          req.body.roomSize || null,
+    bathroomType:      req.body.bathroomType || 'attached',
+    acIncluded:        req.body.acIncluded || false,
+    furnitureIncluded: req.body.furnitureIncluded !== undefined ? req.body.furnitureIncluded : true,
+    amenities:         req.body.amenities || [],
+    notes:             req.body.notes || null,
+    status:            req.body.status || 'active',
+  });
+
+  // 5. Auto-create Beds (A, B, C...)
+  if (totalBeds > 0) {
+    const bedDocs = Array.from({ length: totalBeds }, (_, i) => ({
+      room:     room._id,
+      floor:    floor._id,
+      building: building._id,
+      pg:       pgId,
+      owner:    ownerId,
+      bedLabel: String.fromCharCode(65 + i),
+      status:   'vacant',
+    }));
+    await Bed.insertMany(bedDocs);
+  }
+
+  // 6. Sync stats
+  await syncBuildingFloorStats(building._id, floor._id);
+
+  const beds = await Bed.find({ room: room._id }).sort({ bedLabel: 1 });
+  return successResponse(res, 'Room created successfully with beds', { room, beds }, 201);
 });
 
 exports.syncBuildingFloorStats = syncBuildingFloorStats;

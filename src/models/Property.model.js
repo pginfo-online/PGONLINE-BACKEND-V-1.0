@@ -322,6 +322,77 @@ propertySchema.virtual('availableBeds').get(function () {
   return 0;
 });
 
+/** `facilities` virtual maps to `amenities` for PG callers */
+propertySchema.virtual('facilities').get(function () {
+  return this.amenities || [];
+}).set(function (val) {
+  this.amenities = val;
+});
+
+/** `gender` virtual maps to `pgDetails.gender` */
+propertySchema.virtual('gender').get(function () {
+  return this.pgDetails?.gender || 'any';
+});
+
+/** `food` virtual maps to `pgDetails.food` */
+propertySchema.virtual('food').get(function () {
+  return this.pgDetails?.food || 'none';
+});
+
+/** `foodIncluded` virtual maps to `pgDetails.foodIncluded` */
+propertySchema.virtual('foodIncluded').get(function () {
+  return this.pgDetails?.foodIncluded ?? false;
+});
+
+/** `foodInfo` virtual maps to `pgDetails.foodInfo` */
+propertySchema.virtual('foodInfo').get(function () {
+  return this.pgDetails?.foodInfo || {};
+});
+
+/** `rules` virtual maps to `pgDetails.rules` */
+propertySchema.virtual('rules').get(function () {
+  return this.pgDetails?.rules || {};
+});
+
+/** `securityDeposit` virtual */
+propertySchema.virtual('securityDeposit').get(function () {
+  if (this.pricing?.securityDeposit !== undefined) return this.pricing.securityDeposit;
+  if (this.pgDetails?.roomConfigs?.[0]?.depositAmount !== undefined) {
+    return this.pgDetails.roomConfigs[0].depositAmount;
+  }
+  return 0;
+});
+
+/** `noticePeriod` virtual */
+propertySchema.virtual('noticePeriod').get(function () {
+  return this.pgDetails?.noticePeriod ?? 30;
+});
+
+/** `minStay` virtual */
+propertySchema.virtual('minStay').get(function () {
+  return this.pgDetails?.minStay ?? 1;
+});
+
+/** `isAvailable` virtual */
+propertySchema.virtual('isAvailable').get(function () {
+  return this.pgDetails?.isAvailable ?? true;
+});
+
+/** `rent` virtual maps roomConfigs to { single, double, triple, ... } */
+propertySchema.virtual('rent').get(function () {
+  if (this.category === 'pg' && this.pgDetails?.roomConfigs?.length > 0) {
+    const result = {};
+    this.pgDetails.roomConfigs.forEach((rc) => {
+      const r = Number(rc.rent);
+      if (!isNaN(r) && r > 0 && rc.shareType) {
+        result[rc.shareType] = r;
+      }
+    });
+    if (Object.keys(result).length > 0) return result;
+  }
+  return undefined;
+});
+
 // ─── Indexes ─────────────────────────────────────────────────────────────────
 propertySchema.index({ location: '2dsphere' });
 propertySchema.index({ cityId: 1, status: 1 });
