@@ -3,6 +3,12 @@ const PropertyUpdateRequest = require('../models/PropertyUpdateRequest.model');
 const PG = require('../models/PG.model');
 const User = require('../models/User.model');
 const City = require('../models/City.model');
+const redisCache = require('./redisCache.service');
+
+const invalidateSearchCache = () => {
+  redisCache.delByPattern('search:properties:*').catch(() => {});
+  redisCache.delByPattern('search:suggest:*').catch(() => {});
+};
 
 const escapeRegex = (str) => String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -371,6 +377,7 @@ const createProperty = async (ownerId, data) => {
   }
 
   const property = await Property.create(propertyPayload);
+  invalidateSearchCache();
 
   // Keep PG collection synchronized with identical _id
   if (category === 'pg') {
@@ -527,6 +534,7 @@ const updateProperty = async (propertyId, userId, data, userRole = 'owner') => {
       { $set: data },
       { new: true, runValidators: true }
     );
+    invalidateSearchCache();
 
     if (updated.category === 'pg') {
       try {
@@ -609,6 +617,7 @@ const deleteProperty = async (propertyId, userId, role) => {
     const PG = require('../models/PG.model');
     await PG.findByIdAndDelete(propertyId);
   } catch (e) {}
+  invalidateSearchCache();
   return property;
 };
 

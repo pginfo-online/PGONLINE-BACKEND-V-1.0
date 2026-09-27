@@ -1,68 +1,128 @@
 const Redis = require('ioredis');
 const { logger } = require('../utils/logger');
 
-/**
- * Redis Configuration
- *
- * Production-grade Redis connection with:
- * - Lazy initialization (connects on first use)
- * - Automatic reconnection with exponential backoff
- * - Health check logging
- * - Graceful shutdown support
- *
- * Environment variables:
- *   REDIS_URL          — Full Redis connection URL (redis://host:port)
- *   REDIS_HOST         — Redis host (fallback: 127.0.0.1)
- *   REDIS_PORT         — Redis port (fallback: 6379)
- *   REDIS_PASSWORD     — Redis password (optional)
- *   REDIS_DB           — Redis database number (fallback: 0)
- *   REDIS_KEY_PREFIX   — Key prefix for namespacing (fallback: pginfo:)
- */
-
 let redisConnection = null;
 
+// ==============================================================================
+// Live AWS ElastiCache Serverless Redis Credentials (Hardcoded)
+// ==============================================================================
+// REDIS_URL=rediss://pginfo-redis-group:Jujutsu%409876543211%3D%3D123@pginfo-redis-fba3c7.serverless.use1.cache.amazonaws.com:6379
+// REDIS_HOST=pginfo-redis-fba3c7.serverless.use1.cache.amazonaws.com
+// REDIS_PORT=6379
+// REDIS_USERNAME=pginfo-redis-group
+// REDIS_PASSWORD=Jujutsu@9876543211==123
+// REDIS_DB=0
+// REDIS_KEY_PREFIX=pgm:
+// REDIS_TLS=true
+const LIVE_REDIS_CONFIG = {
+  url: 'rediss://pginfo-redis-group:Jujutsu%409876543211%3D%3D123@pginfo-redis-fba3c7.serverless.use1.cache.amazonaws.com:6379',
+  host: 'pginfo-redis-fba3c7.serverless.use1.cache.amazonaws.com',
+  port: 6379,
+  username: 'pginfo-redis-group',
+  password: 'Jujutsu@9876543211==123',
+  db: 0,
+  keyPrefix: 'pgm:',
+  tls: true,
+};
+
+// Hardcoded live credentials with environment fallback
+const REDIS_HOST =
+  process.env.REDIS_HOST &&
+  process.env.REDIS_HOST !== '127.0.0.1' &&
+  process.env.REDIS_HOST !== 'localhost'
+    ? process.env.REDIS_HOST
+    : LIVE_REDIS_CONFIG.host;
+
+const REDIS_PORT = Number(
+  process.env.REDIS_PORT && process.env.REDIS_PORT !== '6379'
+    ? process.env.REDIS_PORT
+    : LIVE_REDIS_CONFIG.port
+);
+
+const REDIS_USERNAME =
+  process.env.REDIS_USERNAME || LIVE_REDIS_CONFIG.username;
+
+const REDIS_PASSWORD =
+  process.env.REDIS_PASSWORD || LIVE_REDIS_CONFIG.password;
+
+const REDIS_DB = Number(
+  process.env.REDIS_DB !== undefined
+    ? process.env.REDIS_DB
+    : LIVE_REDIS_CONFIG.db
+);
+
+const REDIS_KEY_PREFIX =
+  process.env.REDIS_KEY_PREFIX || LIVE_REDIS_CONFIG.keyPrefix;
+
+const isTls =
+  process.env.REDIS_TLS !== undefined
+    ? process.env.REDIS_TLS === 'true'
+    : LIVE_REDIS_CONFIG.tls;
+
 const REDIS_CONFIG = {
-  host:     process.env.REDIS_HOST || '127.0.0.1',
-  port:     parseInt(process.env.REDIS_PORT, 10) || 6379,
-  password: process.env.REDIS_PASSWORD || undefined,
-  db:       parseInt(process.env.REDIS_DB, 10) || 0,
-  maxRetriesPerRequest: null, // Required by BullMQ
+  host: REDIS_HOST,
+  port: REDIS_PORT,
+  username: REDIS_USERNAME,
+  password: REDIS_PASSWORD,
+  db: REDIS_DB,
+  connectTimeout: 5000,
+  keepAlive: 10000,
+
+  // AWS ElastiCache Serverless requires TLS with SNI servername
+  tls: isTls
+    ? {
+        servername: REDIS_HOST,
+      }
+    : undefined,
+
+  maxRetriesPerRequest: null,
+
   enableReadyCheck: true,
+
   retryStrategy: (times) => {
-    if (times > 20) {
-      logger.error(`[Redis] Max reconnection attempts (20) reached. Giving up.`);
-      return null; // Stop retrying
+    // Stop retrying after 10 attempts to prevent infinite CPU / event loops
+    if (times > 10) {
+      if (!REDIS_CONFIG._hasLoggedMax) {
+        REDIS_CONFIG._hasLoggedMax = true;
+        logger.error('[Redis] Max reconnection attempts (10) reached. Reconnect stopped.');
+      }
+      return null;
     }
-    const delay = Math.min(times * 200, 5000); // Exponential backoff, max 5s
-    logger.warn(`[Redis] Reconnecting in ${delay}ms (attempt ${times})`);
+
+    const delay = Math.min(times * 300, 4000);
+
+    // Throttle log output: only log once every 15s across all connections
+    const now = Date.now();
+    if (!REDIS_CONFIG._lastLogTime || now - REDIS_CONFIG._lastLogTime > 15000) {
+      REDIS_CONFIG._lastLogTime = now;
+      logger.warn(`[Redis] Connection retry in progress (delay: ${delay}ms, attempt: ${times})...`);
+    }
+
     return delay;
   },
+
   reconnectOnError: (err) => {
-    const targetErrors = ['READONLY', 'ECONNRESET', 'ECONNREFUSED'];
-    return targetErrors.some((e) => err.message.includes(e));
+    const targetErrors = [
+      'READONLY',
+      'ECONNRESET',
+      'ECONNREFUSED',
+    ];
+
+    return targetErrors.some((error) =>
+      err.message.includes(error)
+    );
   },
 };
 
-/**
- * Get or create the shared Redis connection instance.
- * Uses REDIS_URL if provided, otherwise falls back to individual config vars.
- */
 const getRedisConnection = () => {
-  if (redisConnection) return redisConnection;
-
-  if (process.env.REDIS_URL) {
-    redisConnection = new Redis(process.env.REDIS_URL, {
-      maxRetriesPerRequest: null,
-      enableReadyCheck: true,
-      retryStrategy: REDIS_CONFIG.retryStrategy,
-      reconnectOnError: REDIS_CONFIG.reconnectOnError,
-    });
-  } else {
-    redisConnection = new Redis(REDIS_CONFIG);
+  if (redisConnection) {
+    return redisConnection;
   }
 
+  redisConnection = new Redis(REDIS_CONFIG);
+
   redisConnection.on('connect', () => {
-    logger.info('✅ Redis connected');
+    logger.info('✅ Redis TCP/TLS connection established');
   });
 
   redisConnection.on('ready', () => {
@@ -70,7 +130,7 @@ const getRedisConnection = () => {
   });
 
   redisConnection.on('error', (err) => {
-    logger.error(`❌ Redis error: ${err.message}`);
+    logger.error(`[Redis] ${err.message}`);
   });
 
   redisConnection.on('close', () => {
@@ -80,43 +140,55 @@ const getRedisConnection = () => {
   return redisConnection;
 };
 
-/**
- * Create a new Redis connection for BullMQ workers.
- * BullMQ requires separate connections for workers (blocking operations).
- */
 const createWorkerConnection = () => {
-  if (process.env.REDIS_URL) {
-    return new Redis(process.env.REDIS_URL, {
-      maxRetriesPerRequest: null,
-      enableReadyCheck: true,
-    });
-  }
-  return new Redis(REDIS_CONFIG);
+  const workerClient = new Redis({
+    ...REDIS_CONFIG,
+    maxRetriesPerRequest: null,
+  });
+
+  // Attach silent error listener to prevent Node.js unhandled error events
+  workerClient.on('error', () => {
+    // Errors are handled and throttled at the worker level
+  });
+
+  return workerClient;
 };
 
-/**
- * Gracefully disconnect Redis on shutdown.
- */
 const disconnectRedis = async () => {
-  if (redisConnection) {
-    try {
-      await redisConnection.quit();
-      logger.info('👋 Redis disconnected gracefully');
-    } catch (err) {
-      logger.error(`❌ Redis disconnect error: ${err.message}`);
-      redisConnection.disconnect();
-    }
-    redisConnection = null;
+  if (!redisConnection) {
+    return;
   }
+
+  try {
+    await redisConnection.quit();
+    logger.info('👋 Redis disconnected gracefully');
+  } catch (err) {
+    logger.error(
+      `❌ Redis disconnect error: ${err.message}`
+    );
+
+    redisConnection.disconnect();
+  }
+
+  redisConnection = null;
 };
 
-/**
- * Redis health check.
- */
-const isRedisHealthy = async () => {
+const isRedisHealthy = async (timeoutMs = 2500) => {
   try {
-    const conn = getRedisConnection();
-    const result = await conn.ping();
+    const redis = getRedisConnection();
+    if (!redis) return false;
+
+    // Fast non-hanging ping check
+    let timer;
+    const timeoutPromise = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error('timeout')), timeoutMs);
+    });
+
+    const pingPromise = redis.ping();
+    const result = await Promise.race([pingPromise, timeoutPromise]).finally(() => {
+      if (timer) clearTimeout(timer);
+    });
+
     return result === 'PONG';
   } catch {
     return false;
@@ -128,5 +200,7 @@ module.exports = {
   createWorkerConnection,
   disconnectRedis,
   isRedisHealthy,
-  REDIS_KEY_PREFIX: process.env.REDIS_KEY_PREFIX || 'pginfo:',
+  REDIS_KEY_PREFIX,
+  REDIS_CONFIG,
+  LIVE_REDIS_CONFIG,
 };

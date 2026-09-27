@@ -13,6 +13,7 @@
  */
 
 const { QUEUE_NAMES, registerWorker, scheduleRepeatingJob, getQueue } = require('../../config/queue');
+const { isRedisHealthy } = require('../../config/redis');
 const { logger } = require('../../utils/logger');
 
 // ─── Services ─────────────────────────────────────────────────────────────────
@@ -408,32 +409,71 @@ const processOverdueMarking = async (job) => {
 };
 
 // ─── Register All Workers ─────────────────────────────────────────────────────
+let workersInitialized = false;
+let redisWatchInterval = null;
+
+const doRegisterWorkers = async () => {
+  if (workersInitialized) return;
+  workersInitialized = true;
+
+  try {
+    logger.info('🚀 Registering BullMQ workers...');
+
+    registerWorker(QUEUE_NAMES.RENT_GENERATION, processRentGeneration, { concurrency: 3 });
+    registerWorker(QUEUE_NAMES.RENT_REMINDERS, processRentReminder, { concurrency: 10 });
+    registerWorker(QUEUE_NAMES.RECEIPT_GENERATION, processReceiptGeneration, { concurrency: 5 });
+    registerWorker(QUEUE_NAMES.NOTIFICATIONS, processNotification, { concurrency: 10 });
+    registerWorker(QUEUE_NAMES.PAYMENT_LINKS, processPaymentLink, { concurrency: 3 });
+
+    // ── Schedule repeating jobs safely ───────────────────────────────────────
+    try {
+      const rentGenQueue = getQueue(QUEUE_NAMES.RENT_GENERATION);
+      await rentGenQueue.add('auto-rent-daily', {}, {
+        repeat: { pattern: '0 6 * * *' }, // 6 AM daily
+        jobId: 'auto-rent-daily',
+      });
+
+      await rentGenQueue.add('overdue-marking-daily', {}, {
+        repeat: { pattern: '0 9 * * *' }, // 9 AM daily
+        jobId: 'overdue-marking-daily',
+      });
+    } catch (schedErr) {
+      logger.warn(`⚠️ [BullMQ] Repeating job scheduling warning: ${schedErr.message}`);
+    }
+
+    logger.info('✅ All BullMQ workers initialized and repeating jobs active');
+  } catch (err) {
+    workersInitialized = false;
+    logger.error(`❌ [BullMQ] Worker initialization error: ${err.message}`);
+  }
+};
+
 const initializeWorkers = async () => {
-  logger.info('🚀 Initializing BullMQ workers...');
+  if (workersInitialized) return;
 
-  registerWorker(QUEUE_NAMES.RENT_GENERATION, processRentGeneration, { concurrency: 3 });
-  registerWorker(QUEUE_NAMES.RENT_REMINDERS, processRentReminder, { concurrency: 10 });
-  registerWorker(QUEUE_NAMES.RECEIPT_GENERATION, processReceiptGeneration, { concurrency: 5 });
-  registerWorker(QUEUE_NAMES.NOTIFICATIONS, processNotification, { concurrency: 10 });
-  registerWorker(QUEUE_NAMES.PAYMENT_LINKS, processPaymentLink, { concurrency: 3 });
+  // Pre-flight check: ensure Redis is reachable before spawning workers
+  const healthy = await isRedisHealthy(2000);
+  if (!healthy) {
+    logger.warn('⚠️ [BullMQ] Redis is unreachable at startup. Worker initialization deferred until Redis is online.');
 
-  // ── Schedule repeating jobs ───────────────────────────────────────────────
-  // Daily auto-rent generation at 6:00 AM IST
-  const rentGenQueue = getQueue(QUEUE_NAMES.RENT_GENERATION);
-  await rentGenQueue.add('auto-rent-daily', {}, {
-    repeat: { pattern: '0 6 * * *' }, // 6 AM daily
-    jobId: 'auto-rent-daily',
-  });
+    if (!redisWatchInterval) {
+      redisWatchInterval = setInterval(async () => {
+        try {
+          const isUp = await isRedisHealthy(2000);
+          if (isUp) {
+            clearInterval(redisWatchInterval);
+            redisWatchInterval = null;
+            await doRegisterWorkers();
+          }
+        } catch {
+          // Ignore periodic check errors
+        }
+      }, 15000);
+    }
+    return;
+  }
 
-  // Daily overdue marking at 9:00 AM IST
-  await rentGenQueue.add('overdue-marking-daily', {}, {
-    repeat: { pattern: '0 9 * * *' }, // 9 AM daily
-    jobId: 'overdue-marking-daily',
-  });
-
-  // Register auto-rent and overdue workers as part of the rent generation queue
-  // They share the queue but use different job names
-  logger.info('✅ All BullMQ workers initialized and repeating jobs scheduled');
+  await doRegisterWorkers();
 };
 
 module.exports = {

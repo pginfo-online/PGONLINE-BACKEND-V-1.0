@@ -18,8 +18,14 @@ const getProperties = asyncHandler(async (req, res) => {
  * Search autocomplete suggestions
  */
 const getPropertySuggestions = asyncHandler(async (req, res) => {
-  const { q, sessiontoken } = req.query;
-  const suggestions = await propertySearchService.getPropertySuggestions(q, sessiontoken);
+  const { q, sessiontoken, city, cityId, category } = req.query;
+  const suggestions = await propertySearchService.getPropertySuggestions({
+    q,
+    sessiontoken,
+    city,
+    cityId,
+    category,
+  });
   successResponse(res, 'Suggestions retrieved', { suggestions });
 });
 

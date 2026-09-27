@@ -22,12 +22,14 @@ const { logger } = require('../utils/logger');
  *  - Graceful shutdown support
  */
 
+const QUEUE_PREFIX = (REDIS_KEY_PREFIX || 'pgm').replace(/:+$/, '');
+
 const QUEUE_NAMES = {
-  RENT_GENERATION:   `${REDIS_KEY_PREFIX}rent-generation`,
-  RENT_REMINDERS:    `${REDIS_KEY_PREFIX}rent-reminders`,
-  RECEIPT_GENERATION: `${REDIS_KEY_PREFIX}receipt-generation`,
-  NOTIFICATIONS:     `${REDIS_KEY_PREFIX}notifications`,
-  PAYMENT_LINKS:     `${REDIS_KEY_PREFIX}payment-links`,
+  RENT_GENERATION: 'rent-generation',
+  RENT_REMINDERS: 'rent-reminders',
+  RECEIPT_GENERATION: 'receipt-generation',
+  NOTIFICATIONS: 'notifications',
+  PAYMENT_LINKS: 'payment-links',
 };
 
 const DEFAULT_JOB_OPTIONS = {
@@ -49,6 +51,23 @@ const DEFAULT_JOB_OPTIONS = {
 const queues = {};
 const workers = {};
 
+// Throttle repeated queue and worker errors to prevent log flooding
+const errorLogThrottle = new Map();
+
+const throttledLogError = (prefix, message, intervalMs = 20000) => {
+  const now = Date.now();
+  const entry = errorLogThrottle.get(prefix) || { lastTime: 0, count: 0 };
+  entry.count++;
+
+  if (now - entry.lastTime > intervalMs) {
+    const suppressedMsg = entry.count > 1 ? ` (${entry.count - 1} duplicate errors suppressed)` : '';
+    logger.error(`[${prefix}] ${message}${suppressedMsg}`);
+    entry.lastTime = now;
+    entry.count = 0;
+  }
+  errorLogThrottle.set(prefix, entry);
+};
+
 /**
  * Get or create a queue instance.
  */
@@ -58,11 +77,12 @@ const getQueue = (queueName) => {
   const connection = getRedisConnection();
   const queue = new Queue(queueName, {
     connection,
+    prefix: QUEUE_PREFIX,
     defaultJobOptions: DEFAULT_JOB_OPTIONS,
   });
 
   queue.on('error', (err) => {
-    logger.error(`[Queue:${queueName}] Error: ${err.message}`);
+    throttledLogError(`Queue:${queueName}`, `Queue error: ${err.message}`);
   });
 
   queues[queueName] = queue;
@@ -82,6 +102,7 @@ const registerWorker = (queueName, processor, opts = {}) => {
 
   const worker = new Worker(queueName, processor, {
     connection,
+    prefix: QUEUE_PREFIX,
     concurrency,
     limiter: opts.limiter || undefined,
   });
@@ -95,7 +116,7 @@ const registerWorker = (queueName, processor, opts = {}) => {
   });
 
   worker.on('error', (err) => {
-    logger.error(`[Worker:${queueName}] Worker error: ${err.message}`);
+    throttledLogError(`Worker:${queueName}`, `Worker error: ${err.message}`);
   });
 
   worker.on('stalled', (jobId) => {

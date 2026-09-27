@@ -1,5 +1,11 @@
 const Property = require('../models/Property.model');
 const notificationTrigger = require('../services/notification/notification.trigger');
+const redisCache = require('./redisCache.service');
+
+const invalidateSearchCache = () => {
+  redisCache.delByPattern('search:properties:*').catch(() => {});
+  redisCache.delByPattern('search:suggest:*').catch(() => {});
+};
 
 /**
  * Get all properties for Admin with filtering, search, and pagination
@@ -139,6 +145,7 @@ const approveProperty = async (propertyId, adminId) => {
     notificationTrigger.onPGApproved(property).catch(() => {});
   }
 
+  invalidateSearchCache();
   return property;
 };
 
@@ -178,6 +185,7 @@ const rejectProperty = async (propertyId, adminId, reason) => {
     notificationTrigger.onPGRejected(property, reason).catch(() => {});
   }
 
+  invalidateSearchCache();
   return property;
 };
 
