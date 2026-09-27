@@ -156,6 +156,17 @@ const createPaymentLink = async ({ amount, currency = 'INR', description, custom
   return await razorpay.paymentLink.create(payload);
 };
 
+/**
+ * Fetch a Razorpay Payment Link by ID.
+ *
+ * @param {string} paymentLinkId
+ * @returns {object} Razorpay payment link entity
+ */
+const fetchPaymentLink = async (paymentLinkId) => {
+  const razorpay = getRazorpayInstance();
+  return await razorpay.paymentLink.fetch(paymentLinkId);
+};
+
 module.exports = {
   createOrder,
   verifyPaymentSignature,
@@ -163,5 +174,6 @@ module.exports = {
   fetchPayment,
   createRefund,
   createPaymentLink,
+  fetchPaymentLink,
 };
 

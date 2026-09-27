@@ -122,7 +122,7 @@ const sendTemplate = async (to, templateName, languageCode = 'en', bodyParams = 
         components.push({
           type: 'button',
           sub_type: btn.sub_type || 'url',
-          index,
+          index: String(btn.index !== undefined ? btn.index : index),
           parameters: [{
             type: 'text',
             text: String(btn.value),
@@ -179,23 +179,105 @@ const sendTemplate = async (to, templateName, languageCode = 'en', bodyParams = 
 // ─── Convenience Methods for Each Template ──────────────────────────────────
 
 /**
+ * Helper to extract Razorpay Payment Link ID suffix (e.g. 'plink_TgDNun5qJZZDJE')
+ * for dynamic CTA buttons in Meta WhatsApp templates.
+ */
+const extractPaymentLinkSuffix = (paymentLinkId, paymentLink) => {
+  if (paymentLinkId && typeof paymentLinkId === 'string') {
+    return paymentLinkId.trim();
+  }
+  if (paymentLink && typeof paymentLink === 'string') {
+    const match = paymentLink.match(/plink_[a-zA-Z0-9]+/);
+    if (match) return match[0];
+    return paymentLink.replace(/^https?:\/\/razorpay\.com\/payment-link\//, '').trim();
+  }
+  return null;
+};
+
+/**
  * Send rent reminder to tenant.
+ * Matches Meta Template:
+ * Body: Hello {{1}}, this is a friendly reminder that your rent of ₹{{2}} for Room {{3}} at {{4}} is due on {{5}}.
+ *       Please make the payment on or before the due date. Thank you, {{6}} -PgInfo Management Team
+ * Button (CTA): URL dynamic suffix {{1}} -> payment link ID (e.g., plink_TgDNun5qJZZDJE)
  */
 const sendRentReminder = async (tenantPhone, data) => {
-  const { tenantName, pgName, roomNumber, amount, dueDate, pgNameMgmt } = data;
-  return sendTemplate(tenantPhone, TEMPLATES.RENT_REMINDER, 'en', [
-    tenantName, pgName, roomNumber, String(amount), dueDate, pgNameMgmt || pgName,
-  ]);
+  const {
+    tenantName,
+    amount,
+    roomNumber,
+    pgName,
+    dueDate,
+    pgNameMgmt,
+    paymentLinkId,
+    paymentLink,
+  } = data;
+
+  const buttonSuffix = extractPaymentLinkSuffix(paymentLinkId, paymentLink);
+
+  const bodyParams = [
+    tenantName || 'Tenant',
+    String(amount || '0'),
+    String(roomNumber || 'N/A'),
+    pgName || 'PG',
+    dueDate || 'due date',
+    pgNameMgmt || `${pgName || 'PG'} Management`,
+  ];
+
+  const buttons = buttonSuffix ? [
+    {
+      sub_type: 'url',
+      index: '0',
+      value: buttonSuffix,
+    },
+  ] : [];
+
+  const templateName = process.env.WHATSAPP_RENT_REMINDER_TEMPLATE || TEMPLATES.RENT_REMINDER;
+  const lang = process.env.WHATSAPP_TEMPLATE_LANG || 'en';
+
+  return sendTemplate(tenantPhone, templateName, lang, bodyParams, [], buttons);
 };
 
 /**
  * Send overdue rent alert to tenant.
  */
 const sendRentOverdue = async (tenantPhone, data) => {
-  const { tenantName, pgName, roomNumber, amount, dueDate, daysOverdue, pgNameMgmt } = data;
-  return sendTemplate(tenantPhone, TEMPLATES.RENT_OVERDUE, 'en', [
-    tenantName, pgName, roomNumber, String(amount), dueDate, String(daysOverdue), pgNameMgmt || pgName,
-  ]);
+  const {
+    tenantName,
+    amount,
+    roomNumber,
+    pgName,
+    dueDate,
+    daysOverdue,
+    pgNameMgmt,
+    paymentLinkId,
+    paymentLink,
+  } = data;
+
+  const buttonSuffix = extractPaymentLinkSuffix(paymentLinkId, paymentLink);
+
+  const bodyParams = [
+    tenantName || 'Tenant',
+    String(amount || '0'),
+    String(roomNumber || 'N/A'),
+    pgName || 'PG',
+    dueDate || 'due date',
+    String(daysOverdue || '0'),
+    pgNameMgmt || `${pgName || 'PG'} Management`,
+  ];
+
+  const buttons = buttonSuffix ? [
+    {
+      sub_type: 'url',
+      index: '0',
+      value: buttonSuffix,
+    },
+  ] : [];
+
+  const templateName = process.env.WHATSAPP_RENT_OVERDUE_TEMPLATE || TEMPLATES.RENT_OVERDUE;
+  const lang = process.env.WHATSAPP_TEMPLATE_LANG || 'en';
+
+  return sendTemplate(tenantPhone, templateName, lang, bodyParams, [], buttons);
 };
 
 /**

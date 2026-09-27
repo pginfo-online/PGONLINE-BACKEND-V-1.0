@@ -4,6 +4,7 @@ const RentRecord  = require('../../models/RentRecord.model');
 const Tenant      = require('../../models/Tenant.model');
 const PG          = require('../../models/PG.model');
 const User        = require('../../models/User.model');
+const Payment     = require('../../models/Payment.model');
 const rentService = require('../../services/manage/rent.service');
 const receiptService = require('../../services/manage/receipt.service');
 const razorpayService = require('../../services/manage/razorpay.service');
@@ -264,12 +265,47 @@ exports.sendRentReminder = asyncHandler(async (req, res) => {
   // 1. WhatsApp Delivery
   if ((channel === 'whatsapp' || channel === 'all') && tenant.phone) {
     try {
+      // Auto-generate Razorpay payment link if missing so CTA button works
+      let paymentLinkId = record.paymentLinkId;
+      let paymentLink = record.paymentLink;
+
+      if (!paymentLinkId && outstanding > 0) {
+        try {
+          const pLink = await razorpayService.createPaymentLink({
+            amount: outstanding * 100, // in paise
+            description: `Rent for ${monthName} ${record.billingYear} — ${record.pg?.name || 'PG'}`,
+            customer: {
+              name:    tenant.name || 'Tenant',
+              email:   tenant.email || undefined,
+              contact: tenant.phone || undefined,
+            },
+            notes: {
+              rentRecordId: record._id.toString(),
+              pgId:         record.pg?._id?.toString() || '',
+              tenantId:     tenant._id?.toString() || '',
+              month:        record.billingMonth,
+              year:         record.billingYear,
+            },
+          });
+          if (pLink?.id) {
+            paymentLinkId = pLink.id;
+            paymentLink = pLink.short_url;
+            await rentService.setPaymentLink(record._id, paymentLink, paymentLinkId);
+          }
+        } catch (e) {
+          logger.warn(`[Reminder] Auto payment link creation skipped: ${e.message}`);
+        }
+      }
+
       const waResult = await whatsappService.sendRentReminder(tenant.phone, {
-        tenantName:  tenant.name,
-        amount:      String(outstanding),
-        dueDate:     dueDateStr,
-        paymentLink: record.paymentLink || 'N/A',
-        pgName:      record.pg?.name || 'PG',
+        tenantName:    tenant.name,
+        amount:        String(outstanding),
+        roomNumber:    record.room?.roomNumber || tenant.room?.roomNumber || 'N/A',
+        pgName:        record.pg?.name || 'PG',
+        dueDate:       dueDateStr,
+        pgNameMgmt:    `${record.pg?.name || 'PG'} Management`,
+        paymentLinkId,
+        paymentLink,
       });
       messageId = waResult.messageId || null;
     } catch (err) {
@@ -381,6 +417,204 @@ exports.createPaymentLink = asyncHandler(async (req, res) => {
     logger.error(`[PaymentLink] Failed to create Razorpay link: ${err.message}`);
     return errorResponse(res, `Failed to generate payment link: ${err.message}`, 500);
   }
+});
+
+// ─── Verify Live Payment Status (Razorpay & Payment Records) ───────────────────
+exports.verifyRentPaymentStatus = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const record = await RentRecord.findOne({ _id: id, owner: req.user._id })
+    .populate('tenant')
+    .populate('pg');
+
+  if (!record) return errorResponse(res, 'Rent record not found or access denied', 404);
+
+  // If already marked as paid
+  if (record.status === 'paid') {
+    return successResponse(res, 'Rent is already marked as paid', {
+      verified: true,
+      status: 'paid',
+      record,
+    });
+  }
+
+  // 1. Check linked Razorpay Payment Link if exists
+  if (record.paymentLinkId) {
+    try {
+      const link = await razorpayService.fetchPaymentLink(record.paymentLinkId);
+      if (link && (link.status === 'paid' || (link.amount_paid && link.amount_paid >= link.amount))) {
+        const paidAmount = link.amount_paid ? Math.round(link.amount_paid / 100) : (record.totalAmount - record.paidAmount);
+
+        await rentService.recordPayment(record._id, paidAmount, {
+          method: 'upi',
+          reference: link.id,
+          notes: 'Auto-verified via Razorpay Payment Link',
+        });
+
+        const updated = await RentRecord.findById(record._id).populate('tenant').populate('pg');
+
+        // Generate receipt in background if needed
+        (async () => {
+          try {
+            const receiptResult = await receiptService.generateAndStoreReceipt({
+              tenantName:    updated.tenant?.name || 'Tenant',
+              tenantPhone:   updated.tenant?.phone || '',
+              pgName:        updated.pg?.name || '',
+              pgAddress:     updated.pg?.address || '',
+              ownerName:     req.user?.name || '',
+              billingMonth:  updated.billingMonth,
+              billingYear:   updated.billingYear,
+              rentAmount:    updated.rentAmount,
+              paidAmount:    paidAmount,
+              paymentMethod: 'online',
+              reference:     link.id,
+            });
+
+            if (receiptResult?.receiptUrl) {
+              updated.invoiceUrl = receiptResult.receiptUrl;
+              updated.invoiceNumber = receiptResult.receiptNumber;
+              await updated.save();
+            }
+          } catch (e) {
+            logger.warn(`[VerifyStatus] Background receipt error: ${e.message}`);
+          }
+        })();
+
+        return successResponse(res, 'Payment verified and rent marked as paid!', {
+          verified: true,
+          status: 'paid',
+          record: updated,
+        });
+      }
+    } catch (linkErr) {
+      logger.warn(`[VerifyStatus] Could not fetch Razorpay link ${record.paymentLinkId}: ${linkErr.message}`);
+    }
+  }
+
+  // 2. Check Payment collection for matching successful transaction
+  const matchingPayment = await Payment.findOne({
+    rentRecord: record._id,
+    status: 'paid',
+  });
+
+  if (matchingPayment) {
+    await rentService.recordPayment(record._id, matchingPayment.amount, {
+      method: matchingPayment.method || 'razorpay',
+      reference: matchingPayment.razorpayPaymentId || matchingPayment._id.toString(),
+      notes: 'Verified via Payment transaction record',
+    });
+
+    const updated = await RentRecord.findById(record._id).populate('tenant').populate('pg');
+    return successResponse(res, 'Payment verified through transaction record!', {
+      verified: true,
+      status: 'paid',
+      record: updated,
+    });
+  }
+
+  return successResponse(res, `No settled payment found yet. Current status: ${record.status}`, {
+    verified: false,
+    status: record.status,
+    record,
+  });
+});
+
+// ─── Bulk Rent Reminders ──────────────────────────────────────────────────────
+exports.sendBulkRentReminders = asyncHandler(async (req, res) => {
+  const { rentRecordIds, channel = 'whatsapp', type = 'due_reminder' } = req.body;
+
+  if (!Array.isArray(rentRecordIds) || rentRecordIds.length === 0) {
+    return errorResponse(res, 'rentRecordIds array is required', 400);
+  }
+
+  const records = await RentRecord.find({
+    _id: { $in: rentRecordIds },
+    owner: req.user._id,
+    status: { $in: ['pending', 'overdue', 'partial'] },
+  }).populate('tenant').populate('pg');
+
+  const results = [];
+  let successful = 0;
+  let failed = 0;
+
+  for (const record of records) {
+    try {
+      const tenant = record.tenant;
+      if (!tenant) {
+        failed++;
+        results.push({ id: record._id, success: false, error: 'Tenant not found' });
+        continue;
+      }
+
+      const outstanding = record.totalAmount - record.paidAmount;
+      const dueDateStr = new Date(record.dueDate).toLocaleDateString('en-IN', {
+        day: 'numeric', month: 'short', year: 'numeric',
+      });
+
+      // Audit log
+      await rentService.recordReminderSent(record._id, {
+        channel,
+        type,
+        status: 'sent',
+        sentBy: req.user._id,
+      });
+
+      if (channel === 'whatsapp' && tenant.phone) {
+        let pId = record.paymentLinkId;
+        let pUrl = record.paymentLink;
+
+        if (!pId && outstanding > 0) {
+          try {
+            const pLink = await razorpayService.createPaymentLink({
+              amount: outstanding * 100,
+              description: `Rent for Month ${record.billingMonth} — ${record.pg?.name || 'PG'}`,
+              customer: { name: tenant.name, contact: tenant.phone },
+            });
+            if (pLink?.id) {
+              pId = pLink.id;
+              pUrl = pLink.short_url;
+              await rentService.setPaymentLink(record._id, pUrl, pId);
+            }
+          } catch (e) {
+            logger.warn(`[BulkReminders] Auto link failed for ${record._id}: ${e.message}`);
+          }
+        }
+
+        await whatsappService.sendRentReminder(tenant.phone, {
+          tenantName:    tenant.name,
+          amount:        String(outstanding),
+          roomNumber:    record.room?.roomNumber || tenant.room?.roomNumber || 'N/A',
+          pgName:        record.pg?.name || 'PG',
+          dueDate:       dueDateStr,
+          pgNameMgmt:    `${record.pg?.name || 'PG'} Management`,
+          paymentLinkId: pId,
+          paymentLink:   pUrl,
+        });
+      }
+
+      if (tenant.user) {
+        notificationTrigger.onRentReminder({
+          tenant: tenant._id,
+          user: tenant.user,
+          amount: outstanding,
+          dueDate: dueDateStr,
+          month: record.billingMonth,
+        }).catch(() => {});
+      }
+
+      successful++;
+      results.push({ id: record._id, success: true });
+    } catch (err) {
+      failed++;
+      results.push({ id: record._id, success: false, error: err.message });
+    }
+  }
+
+  return successResponse(res, `Bulk reminders processed: ${successful} sent, ${failed} failed`, {
+    total: rentRecordIds.length,
+    successful,
+    failed,
+    results,
+  });
 });
 
 // ─── Get Reminder History for Rent Record ─────────────────────────────────────

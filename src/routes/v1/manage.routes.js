@@ -102,7 +102,9 @@ router.put('/rent/:id', ownerOrAdmin, validate(validators.updateRentRecordSchema
 router.delete('/rent/:id', ownerOrAdmin, rentController.deleteRentRecord);
 router.post('/rent/:id/mark-paid', ownerOrAdmin, validate(validators.markRentPaidSchema), rentController.markRentPaid);
 router.post('/rent/:id/send-reminder', ownerOrAdmin, validate(validators.sendReminderSchema), rentController.sendRentReminder);
+router.post('/rent/bulk-reminders', ownerOrAdmin, rentController.sendBulkRentReminders);
 router.post('/rent/:id/payment-link', ownerOrAdmin, rentController.createPaymentLink);
+router.post('/rent/:id/verify-status', ownerOrAdmin, rentController.verifyRentPaymentStatus);
 router.get('/rent/:id/reminders', ownerOrAdmin, rentController.getReminderHistory);
 router.get('/pgs/:pgId/rent-settings', ownerOrAdmin, rentController.getRentSettings);
 router.put('/pgs/:pgId/rent-settings', ownerOrAdmin, rentController.updateRentSettings);
