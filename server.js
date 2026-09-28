@@ -41,10 +41,10 @@ app.set(
   trustProxyConfig === 'true'
     ? true
     : trustProxyConfig === 'false'
-    ? false
-    : isNaN(Number(trustProxyConfig))
-    ? trustProxyConfig
-    : Number(trustProxyConfig)
+      ? false
+      : isNaN(Number(trustProxyConfig))
+        ? trustProxyConfig
+        : Number(trustProxyConfig)
 );
 
 // ─── Security & Performance Middleware ────────────────────────────────────────
@@ -133,7 +133,7 @@ app.use(
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// ─── Request Logger ───────────────────────────────────────────────────────────
+// ─── Request Loggerr ───────────────────────────────────────────────────────────
 if (process.env.NODE_ENV === 'production') {
   // Only log client/server errors (status >= 400) in production to keep PM2 console clean
   app.use(
@@ -164,8 +164,8 @@ app.get('/health', async (req, res) => {
     message: isHealthy
       ? 'PGinfo.online API is fully operational'
       : isDegraded
-      ? 'PGinfo.online API is running in degraded mode (Redis offline)'
-      : 'Database connection unavailable',
+        ? 'PGinfo.online API is running in degraded mode (Redis offline)'
+        : 'Database connection unavailable',
     version: '1.0.0',
     environment: process.env.NODE_ENV || 'development',
     timestamp: new Date().toISOString(),
@@ -256,8 +256,7 @@ const startServer = async () => {
     // 3. Start listening for incoming HTTP requests (bound to 0.0.0.0 for Nginx IPv4 reverse proxy)
     server = app.listen(PORT, '0.0.0.0', () => {
       logger.info(
-        `🚀 PGinfo.online API running on port ${PORT} [${process.env.NODE_ENV || 'development'}] (Worker: ${
-          process.env.NODE_APP_INSTANCE || 'standalone'
+        `🚀 PGinfo.online API running on port ${PORT} [${process.env.NODE_ENV || 'development'}] (Worker: ${process.env.NODE_APP_INSTANCE || 'standalone'
         })`
       );
 
@@ -309,12 +308,12 @@ const handleGracefulShutdown = async (signal) => {
     try {
       const { shutdownQueues } = require('./src/config/queue');
       await shutdownQueues();
-    } catch (_) {}
+    } catch (_) { }
 
     // 4. Gracefully disconnect Redis client and connections
     try {
       await disconnectRedis();
-    } catch (_) {}
+    } catch (_) { }
 
     clearTimeout(shutdownTimeout);
     logger.info('👋 Graceful shutdown completed cleanly');
