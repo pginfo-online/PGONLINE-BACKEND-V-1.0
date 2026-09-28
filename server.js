@@ -9,6 +9,7 @@ const rateLimit = require('express-rate-limit');
 
 const connectDB = require('./src/config/db');
 const { disconnectDB } = connectDB;
+const { validateRedisConfig, isRedisHealthy, disconnectRedis } = require('./src/config/redis');
 const v1Routes = require('./src/routes/v1/index');
 const errorMiddleware = require('./src/middlewares/error.middleware');
 const { logger } = require('./src/utils/logger');
@@ -145,16 +146,26 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 // ─── Health Checks (AWS Target Group / ALB / ECS / Route53) ───────────────────
-app.get('/health', (req, res) => {
+app.get('/health', async (req, res) => {
   const mongoose = require('mongoose');
   const isDbConnected = mongoose.connection.readyState === 1;
   const dbStates = { 0: 'disconnected', 1: 'connected', 2: 'connecting', 3: 'disconnecting' };
   const memoryUsage = process.memoryUsage();
 
+  // Fast, non-blocking check for Redis health (PING -> PONG)
+  const isRedisConnected = await isRedisHealthy(1500);
+
+  const isHealthy = isDbConnected && isRedisConnected;
+  const isDegraded = isDbConnected && !isRedisConnected;
+
   const healthPayload = {
     success: isDbConnected,
-    status: isDbConnected ? 'UP' : 'DEGRADED',
-    message: isDbConnected ? 'PGinfo.online API is running' : 'Database connection unavailable',
+    status: isHealthy ? 'UP' : isDegraded ? 'DEGRADED' : 'DOWN',
+    message: isHealthy
+      ? 'PGinfo.online API is fully operational'
+      : isDegraded
+      ? 'PGinfo.online API is running in degraded mode (Redis offline)'
+      : 'Database connection unavailable',
     version: '1.0.0',
     environment: process.env.NODE_ENV || 'development',
     timestamp: new Date().toISOString(),
@@ -162,6 +173,10 @@ app.get('/health', (req, res) => {
     database: {
       status: dbStates[mongoose.connection.readyState] || 'unknown',
       connected: isDbConnected,
+    },
+    redis: {
+      status: isRedisConnected ? 'connected' : 'disconnected',
+      connected: isRedisConnected,
     },
     memory: {
       rss: `${Math.round(memoryUsage.rss / 1024 / 1024)}MB`,
@@ -180,9 +195,12 @@ app.get('/health/live', (_req, res) => {
 });
 
 // Lightweight readiness probe (checks if server is ready to accept traffic)
-app.get('/health/ready', (_req, res) => {
+app.get('/health/ready', async (_req, res) => {
   const mongoose = require('mongoose');
-  if (mongoose.connection.readyState === 1) {
+  const isDbReady = mongoose.connection.readyState === 1;
+  const isRedisReady = await isRedisHealthy(1500);
+
+  if (isDbReady && isRedisReady) {
     return res.status(200).send('READY');
   }
   return res.status(503).send('NOT_READY');
@@ -204,7 +222,10 @@ let server;
 
 const startServer = async () => {
   try {
-    // 1. Establish database connection before accepting traffic
+    // 1. Validate Redis configuration (fails fast in production if REDIS_URL is missing or invalid)
+    validateRedisConfig();
+
+    // 2. Establish database connection before accepting traffic
     await connectDB();
 
     // 2. Schedulers: In PM2 cluster mode, run only on primary instance (instance 0)
@@ -288,6 +309,11 @@ const handleGracefulShutdown = async (signal) => {
     try {
       const { shutdownQueues } = require('./src/config/queue');
       await shutdownQueues();
+    } catch (_) {}
+
+    // 4. Gracefully disconnect Redis client and connections
+    try {
+      await disconnectRedis();
     } catch (_) {}
 
     clearTimeout(shutdownTimeout);

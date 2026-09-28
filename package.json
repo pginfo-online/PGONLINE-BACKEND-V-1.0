@@ -14,7 +14,9 @@
     "pm2:logs": "pm2 logs pginfo-backend",
     "backfill:property-cities": "node src/scripts/backfillPropertyCityIds.js",
     "backfill:property-cities:apply": "node src/scripts/backfillPropertyCityIds.js --apply",
-    "seed": "node src/scripts/seed.js"
+    "seed": "node src/scripts/seed.js",
+    "test": "node test/redis_upstash.test.js && node test/manage_backend.test.js && node test/manage_routes.test.js",
+    "test:redis": "node test/redis_upstash.test.js"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",

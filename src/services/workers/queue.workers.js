@@ -453,14 +453,14 @@ const initializeWorkers = async () => {
   if (workersInitialized) return;
 
   // Pre-flight check: ensure Redis is reachable before spawning workers
-  const healthy = await isRedisHealthy(2000);
+  const healthy = await isRedisHealthy(3000);
   if (!healthy) {
     logger.warn('⚠️ [BullMQ] Redis is unreachable at startup. Worker initialization deferred until Redis is online.');
 
     if (!redisWatchInterval) {
       redisWatchInterval = setInterval(async () => {
         try {
-          const isUp = await isRedisHealthy(2000);
+          const isUp = await isRedisHealthy(3000);
           if (isUp) {
             clearInterval(redisWatchInterval);
             redisWatchInterval = null;

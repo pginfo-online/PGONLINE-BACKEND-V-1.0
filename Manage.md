@@ -80,13 +80,8 @@ sudo systemctl enable redis.service
 ### 1.3 Environment Variables
 Add to your `backend/.env`:
 ```env
-# Full connection string:
-REDIS_URL=redis://:your_strong_redis_password@127.0.0.1:6379
-
-# OR separate parameters:
-REDIS_HOST=127.0.0.1
-REDIS_PORT=6379
-REDIS_PASSWORD=your_strong_redis_password
+# Upstash Redis TLS connection URL:
+REDIS_URL=rediss://default:<UPSTASH_PASSWORD>@<UPSTASH_ENDPOINT>:6379
 REDIS_DB=0
 REDIS_KEY_PREFIX=pgm:
 ```

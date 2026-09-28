@@ -13,7 +13,7 @@ const { logger } = require('../utils/logger');
  */
 
 const PREFIX = process.env.REDIS_KEY_PREFIX || 'pgm:';
-const TIMEOUT_MS = 1200;
+const TIMEOUT_MS = Number(process.env.REDIS_TIMEOUT_MS) || 2500;
 
 const withTimeout = (promise, ms = TIMEOUT_MS) => {
   let timer;
