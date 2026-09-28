@@ -15,6 +15,7 @@
 const { QUEUE_NAMES, registerWorker, scheduleRepeatingJob, getQueue } = require('../../config/queue');
 const { isRedisHealthy } = require('../../config/redis');
 const { logger } = require('../../utils/logger');
+const razorpayConfig = require('../../config/razorpay');
 
 // ─── Services ─────────────────────────────────────────────────────────────────
 const rentService     = require('../manage/rent.service');
@@ -300,8 +301,8 @@ const processPaymentLink = async (job) => {
   try {
     const Razorpay = require('razorpay');
     const rzp = new Razorpay({
-      key_id:     process.env.RAZORPAY_KEY_ID,
-      key_secret: process.env.RAZORPAY_KEY_SECRET,
+      key_id:     razorpayConfig.keyId,
+      key_secret: razorpayConfig.keySecret,
     });
 
     const paymentLink = await rzp.paymentLink.create(linkData);

@@ -1,5 +1,6 @@
 const Razorpay = require('razorpay');
 const crypto = require('crypto');
+const razorpayConfig = require('../../config/razorpay');
 
 /**
  * Razorpay Service
@@ -13,8 +14,8 @@ const crypto = require('crypto');
 
 // ─── Lazy Razorpay Instance Getter ───────────────────────────────────────────
 const getRazorpayInstance = () => {
-  const key_id = process.env.RAZORPAY_KEY_ID;
-  const key_secret = process.env.RAZORPAY_KEY_SECRET;
+  const key_id = razorpayConfig.keyId;
+  const key_secret = razorpayConfig.keySecret;
 
   if (!key_id || !key_secret) {
     throw new Error('Razorpay API keys (RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET) are missing in server environment variables.');
@@ -60,7 +61,7 @@ const createOrder = async ({ amount, currency = 'INR', receipt, notes = {} }) =>
 const verifyPaymentSignature = ({ razorpayOrderId, razorpayPaymentId, razorpaySignature }) => {
   const body = `${razorpayOrderId}|${razorpayPaymentId}`;
   const expectedSignature = crypto
-    .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
+    .createHmac('sha256', razorpayConfig.keySecret)
     .update(body)
     .digest('hex');
 
@@ -77,7 +78,7 @@ const verifyPaymentSignature = ({ razorpayOrderId, razorpayPaymentId, razorpaySi
  */
 const verifyWebhookSignature = (rawBody, webhookSignature) => {
   const expectedSignature = crypto
-    .createHmac('sha256', process.env.RAZORPAY_WEBHOOK_SECRET)
+    .createHmac('sha256', razorpayConfig.webhookSecret)
     .update(rawBody)
     .digest('hex');
 

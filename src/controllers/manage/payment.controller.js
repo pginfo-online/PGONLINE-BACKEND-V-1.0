@@ -6,6 +6,7 @@ const Tenant     = require('../../models/Tenant.model');
 const PG         = require('../../models/PG.model');
 const User       = require('../../models/User.model');
 const razorpayService = require('../../services/manage/razorpay.service');
+const razorpayConfig = require('../../config/razorpay');
 const rentService     = require('../../services/manage/rent.service');
 const receiptService  = require('../../services/manage/receipt.service');
 const whatsappService = require('../../services/notification/whatsapp.service');
@@ -95,7 +96,7 @@ exports.createOrder = asyncHandler(async (req, res) => {
     amount:     order.amount,
     currency:   order.currency,
     paymentId:  payment._id,
-    keyId:      process.env.RAZORPAY_KEY_ID, // public key only
+    keyId:      razorpayConfig.keyId, // public key only
   }, 201);
 });
 
