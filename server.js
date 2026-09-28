@@ -135,10 +135,10 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // ─── Request Logger ───────────────────────────────────────────────────────────
 if (process.env.NODE_ENV === 'production') {
-  // Use combined Apache format in production, skip health check polling noise
+  // Only log client/server errors (status >= 400) in production to keep PM2 console clean
   app.use(
     morgan('combined', {
-      skip: (req) => req.url === '/health' || req.url === '/health/live' || req.url === '/health/ready',
+      skip: (req, res) => res.statusCode < 400 || req.url.startsWith('/health'),
     })
   );
 } else {
