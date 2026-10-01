@@ -57,7 +57,7 @@ Scroll down to the **Environment Variables** section on the Render Web Service c
 | `CLOUDINARY_API_KEY` | `your_cloudinary_api_key` | **Required** for image storage. |
 | `CLOUDINARY_API_SECRET` | `your_cloudinary_api_secret` | **Required** for image storage. |
 | `GROQ_API_KEY` | `gsk_your_groq_api_key_here` | **Required** for AI chat capability. |
-| `CLIENT_URL` | `https://your-frontend.vercel.app` | **Required**: Production domain of your frontend. You can list multiple origins separated by commas (e.g. `https://your-frontend.vercel.app,http://localhost:5173`). |
+| `CLIENT_URL` | `https://www.pginfo.in` | **Required**: Production domain of your frontend. You can list multiple origins separated by commas (e.g. `https://www.pginfo.in,http://localhost:5173`). |
 
 ---
 

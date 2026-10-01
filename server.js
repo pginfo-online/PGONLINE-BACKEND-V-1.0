@@ -56,6 +56,7 @@ app.use(compression());
 
 // ─── Robust & Dynamic CORS Setup ──────────────────────────────────────────────
 const defaultOrigins = [
+  'https://www.pginfo.in',
   'http://localhost:5173',
   'http://localhost:5174',
   'http://localhost:5175',
