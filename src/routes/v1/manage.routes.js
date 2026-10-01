@@ -3,6 +3,7 @@ const router  = express.Router();
 
 const { protect, authorize, optionalAuth } = require('../../middlewares/auth.middleware');
 const validate = require('../../middlewares/validate.middleware');
+const upload = require('../../middlewares/upload.middleware');
 const validators = require('../../validators/manage.validator');
 
 // Controllers
@@ -67,6 +68,7 @@ router.post('/floors/:floorId/rooms', ownerOrAdmin, validate(validators.createRo
 router.get('/floors/:floorId/rooms', ownerOrAdmin, propertyController.getRooms);
 router.get('/rooms/:id', ownerOrAdmin, propertyController.getRoom);
 router.put('/rooms/:id', ownerOrAdmin, validate(validators.updateRoomSchema), propertyController.updateRoom);
+router.post('/rooms/:id/image', ownerOrAdmin, upload.single('image'), propertyController.uploadRoomImage);
 router.delete('/rooms/:id', ownerOrAdmin, propertyController.deleteRoom);
 
 // ─── Bed APIs & Availability Overview ─────────────────────────────────────────

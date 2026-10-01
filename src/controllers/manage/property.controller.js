@@ -12,46 +12,63 @@ const PG       = require('../../models/PG.model');
  * Call after any Room or Bed mutation.
  */
 const syncBuildingFloorStats = async (buildingId, floorId) => {
+  const tasks = [];
+
   if (floorId) {
-    const [floorStats] = await Bed.aggregate([
-      { $match: { floor: floorId } },
-      {
-        $group: {
-          _id: null,
-          totalBeds:    { $sum: 1 },
-          occupiedBeds: { $sum: { $cond: [{ $eq: ['$status', 'occupied'] }, 1, 0] } },
-          vacantBeds:   { $sum: { $cond: [{ $eq: ['$status', 'vacant'] },   1, 0] } },
-        },
-      },
-    ]);
-    const totalRooms = await Room.countDocuments({ floor: floorId });
-    await Floor.findByIdAndUpdate(floorId, {
-      'stats.totalRooms':   totalRooms,
-      'stats.totalBeds':    floorStats?.totalBeds || 0,
-      'stats.occupiedBeds': floorStats?.occupiedBeds || 0,
-      'stats.vacantBeds':   floorStats?.vacantBeds || 0,
-    });
+    tasks.push(
+      (async () => {
+        const [floorStats, totalRooms] = await Promise.all([
+          Bed.aggregate([
+            { $match: { floor: floorId } },
+            {
+              $group: {
+                _id: null,
+                totalBeds:    { $sum: 1 },
+                occupiedBeds: { $sum: { $cond: [{ $eq: ['$status', 'occupied'] }, 1, 0] } },
+                vacantBeds:   { $sum: { $cond: [{ $eq: ['$status', 'vacant'] },   1, 0] } },
+              },
+            },
+          ]),
+          Room.countDocuments({ floor: floorId }),
+        ]);
+        await Floor.findByIdAndUpdate(floorId, {
+          'stats.totalRooms':   totalRooms,
+          'stats.totalBeds':    floorStats[0]?.totalBeds || 0,
+          'stats.occupiedBeds': floorStats[0]?.occupiedBeds || 0,
+          'stats.vacantBeds':   floorStats[0]?.vacantBeds || 0,
+        });
+      })()
+    );
   }
+
   if (buildingId) {
-    const [buildingStats] = await Bed.aggregate([
-      { $match: { building: buildingId } },
-      {
-        $group: {
-          _id: null,
-          totalBeds:    { $sum: 1 },
-          occupiedBeds: { $sum: { $cond: [{ $eq: ['$status', 'occupied'] }, 1, 0] } },
-          vacantBeds:   { $sum: { $cond: [{ $eq: ['$status', 'vacant'] },   1, 0] } },
-        },
-      },
-    ]);
-    const totalRooms = await Room.countDocuments({ building: buildingId });
-    await Building.findByIdAndUpdate(buildingId, {
-      'stats.totalRooms':   totalRooms,
-      'stats.totalBeds':    buildingStats?.totalBeds || 0,
-      'stats.occupiedBeds': buildingStats?.occupiedBeds || 0,
-      'stats.vacantBeds':   buildingStats?.vacantBeds || 0,
-    });
+    tasks.push(
+      (async () => {
+        const [buildingStats, totalRooms] = await Promise.all([
+          Bed.aggregate([
+            { $match: { building: buildingId } },
+            {
+              $group: {
+                _id: null,
+                totalBeds:    { $sum: 1 },
+                occupiedBeds: { $sum: { $cond: [{ $eq: ['$status', 'occupied'] }, 1, 0] } },
+                vacantBeds:   { $sum: { $cond: [{ $eq: ['$status', 'vacant'] },   1, 0] } },
+              },
+            },
+          ]),
+          Room.countDocuments({ building: buildingId }),
+        ]);
+        await Building.findByIdAndUpdate(buildingId, {
+          'stats.totalRooms':   totalRooms,
+          'stats.totalBeds':    buildingStats[0]?.totalBeds || 0,
+          'stats.occupiedBeds': buildingStats[0]?.occupiedBeds || 0,
+          'stats.vacantBeds':   buildingStats[0]?.vacantBeds || 0,
+        });
+      })()
+    );
   }
+
+  await Promise.all(tasks);
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -351,6 +368,26 @@ exports.updateRoom = asyncHandler(async (req, res) => {
   await room.save();
   await syncBuildingFloorStats(room.building, room.floor);
   return successResponse(res, 'Room updated', room);
+});
+
+exports.uploadRoomImage = asyncHandler(async (req, res) => {
+  const room = await Room.findOne({ _id: req.params.id, owner: req.user._id });
+  if (!room) return errorResponse(res, 'Room not found or access denied', 404);
+
+  if (req.file) {
+    const { uploadToCloudinary } = require('../../services/cloudinary.service');
+    const result = await uploadToCloudinary(req.file.buffer, 'rooms');
+    room.image = result.secure_url;
+    room.imagePublicId = result.public_id;
+  } else if (req.body.imageUrl || req.body.image) {
+    room.image = req.body.imageUrl || req.body.image;
+    if (req.body.imagePublicId) room.imagePublicId = req.body.imagePublicId;
+  } else {
+    return errorResponse(res, 'Image file or imageUrl is required', 400);
+  }
+
+  await room.save();
+  return successResponse(res, 'Room image updated successfully', room);
 });
 
 exports.deleteRoom = asyncHandler(async (req, res) => {

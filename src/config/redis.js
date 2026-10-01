@@ -149,23 +149,10 @@ const createClientOptions = (customOptions = {}) => {
     // maxRetriesPerRequest: null is required for BullMQ compatibility
     maxRetriesPerRequest: null,
 
-    retryStrategy: (times) => {
-      // In test mode, cap retries quickly to avoid hanging test suites
-      if (process.env.NODE_ENV === 'test' && times > 2) {
-        return null;
-      }
+    // Returning null tells ioredis to NOT retry on connection failure.
+    // Commented-out = ioredis uses its default (infinite retries), which is NOT what we want.
+    retryStrategy: () => null,
 
-      // Exponential backoff capped at 4000ms with jitter
-      const delay = Math.min(50 * Math.pow(1.5, Math.min(times, 8)), 4000) + Math.floor(Math.random() * 200);
-
-      const now = Date.now();
-      if (!logThrottle.lastRetryLog || now - logThrottle.lastRetryLog > 20000) {
-        logThrottle.lastRetryLog = now;
-        logger.warn(`[Redis] Connection retry attempt #${times} (delaying ${Math.round(delay)}ms)...`);
-      }
-
-      return delay;
-    },
 
     reconnectOnError: (err) => {
       const targetErrors = ['READONLY', 'ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT'];

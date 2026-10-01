@@ -418,13 +418,14 @@ const doRegisterWorkers = async () => {
   workersInitialized = true;
 
   try {
-    logger.info('🚀 Registering BullMQ workers...');
+    logger.info('[BullMQ] Registering workers...');
 
-    registerWorker(QUEUE_NAMES.RENT_GENERATION, processRentGeneration, { concurrency: 3 });
-    registerWorker(QUEUE_NAMES.RENT_REMINDERS, processRentReminder, { concurrency: 10 });
-    registerWorker(QUEUE_NAMES.RECEIPT_GENERATION, processReceiptGeneration, { concurrency: 5 });
-    registerWorker(QUEUE_NAMES.NOTIFICATIONS, processNotification, { concurrency: 10 });
-    registerWorker(QUEUE_NAMES.PAYMENT_LINKS, processPaymentLink, { concurrency: 3 });
+    // Lower concurrency on free Upstash tier to reduce idle Redis polling
+    registerWorker(QUEUE_NAMES.RENT_GENERATION,   processRentGeneration,   { concurrency: 2 });
+    registerWorker(QUEUE_NAMES.RENT_REMINDERS,    processRentReminder,     { concurrency: 3 });
+    registerWorker(QUEUE_NAMES.RECEIPT_GENERATION,processReceiptGeneration, { concurrency: 2 });
+    registerWorker(QUEUE_NAMES.NOTIFICATIONS,     processNotification,     { concurrency: 3 });
+    registerWorker(QUEUE_NAMES.PAYMENT_LINKS,     processPaymentLink,      { concurrency: 2 });
 
     // ── Schedule repeating jobs safely ───────────────────────────────────────
     try {
@@ -433,19 +434,19 @@ const doRegisterWorkers = async () => {
         repeat: { pattern: '0 6 * * *' }, // 6 AM daily
         jobId: 'auto-rent-daily',
       });
-
       await rentGenQueue.add('overdue-marking-daily', {}, {
         repeat: { pattern: '0 9 * * *' }, // 9 AM daily
         jobId: 'overdue-marking-daily',
       });
     } catch (schedErr) {
-      logger.warn(`⚠️ [BullMQ] Repeating job scheduling warning: ${schedErr.message}`);
+      logger.warn(`[BullMQ] Repeating job scheduling warning: ${schedErr.message}`);
     }
 
-    logger.info('✅ All BullMQ workers initialized and repeating jobs active');
+    logger.info('[BullMQ] All workers initialized and repeating jobs active');
   } catch (err) {
+    // Reset so re-initialization can be attempted (e.g. after circuit recovery)
     workersInitialized = false;
-    logger.error(`❌ [BullMQ] Worker initialization error: ${err.message}`);
+    logger.error(`[BullMQ] Worker initialization error: ${err.message}`);
   }
 };
 
@@ -455,7 +456,7 @@ const initializeWorkers = async () => {
   // Pre-flight check: ensure Redis is reachable before spawning workers
   const healthy = await isRedisHealthy(3000);
   if (!healthy) {
-    logger.warn('⚠️ [BullMQ] Redis is unreachable at startup. Worker initialization deferred until Redis is online.');
+    logger.warn('[BullMQ] Redis unreachable at startup — deferring worker init until Redis is online');
 
     if (!redisWatchInterval) {
       redisWatchInterval = setInterval(async () => {
@@ -464,6 +465,7 @@ const initializeWorkers = async () => {
           if (isUp) {
             clearInterval(redisWatchInterval);
             redisWatchInterval = null;
+            workersInitialized = false; // Allow fresh registration
             await doRegisterWorkers();
           }
         } catch {
