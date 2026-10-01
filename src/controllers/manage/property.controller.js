@@ -305,6 +305,14 @@ exports.updateRoom = asyncHandler(async (req, res) => {
   ];
   ALLOWED.forEach((key) => { if (req.body[key] !== undefined) room[key] = req.body[key]; });
 
+  if (req.body.rentPerBed !== undefined && req.body.rentPerBed !== null) {
+    room.rentPerBed = Number(req.body.rentPerBed);
+  } else if (req.body.rent !== undefined && req.body.rent !== null) {
+    room.rentPerBed = Number(req.body.rent);
+  } else if (req.body.monthlyRent !== undefined && req.body.monthlyRent !== null) {
+    room.rentPerBed = Number(req.body.monthlyRent);
+  }
+
   // Handle totalBeds change
   if (req.body.totalBeds !== undefined && Number(req.body.totalBeds) !== room.totalBeds) {
     const newTotal = Number(req.body.totalBeds);
@@ -654,8 +662,15 @@ exports.createPGRoom = asyncHandler(async (req, res) => {
     totalBeds,
     occupiedBeds:      0,
     vacantBeds:        totalBeds,
-    rentPerBed:        req.body.rentPerBed,
-    depositAmount:     req.body.depositAmount || 0,
+    rentPerBed:
+      req.body.rentPerBed !== undefined && req.body.rentPerBed !== null
+        ? Number(req.body.rentPerBed)
+        : req.body.rent !== undefined && req.body.rent !== null
+        ? Number(req.body.rent)
+        : req.body.monthlyRent !== undefined && req.body.monthlyRent !== null
+        ? Number(req.body.monthlyRent)
+        : 0,
+    depositAmount:     req.body.depositAmount || req.body.deposit || 0,
     floorLabel,
     hasMeter:          req.body.hasMeter || false,
     image:             req.body.image || null,

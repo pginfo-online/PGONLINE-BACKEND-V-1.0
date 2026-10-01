@@ -62,29 +62,30 @@ const defaultOrigins = [
   'http://localhost:3000',
   'http://localhost:8081',
   'http://127.0.0.1:5173',
+  'http://localhost:3000',
 ];
 
-const configuredOrigins = process.env.CLIENT_URL
+const userConfiguredOrigins = process.env.CLIENT_URL
   ? process.env.CLIENT_URL.split(',').map((origin) => origin.trim().replace(/\/$/, '')).filter(Boolean)
-  : defaultOrigins;
+  : [];
 
-app.use(cors({
+const configuredOrigins = Array.from(new Set([...defaultOrigins, ...userConfiguredOrigins]));
+
+const corsOptions = {
   origin: (origin, callback) => {
     // Allow mobile apps, curl, Postman, server-to-server requests (no origin header)
     if (!origin) return callback(null, true);
 
     const normalizedOrigin = origin.replace(/\/$/, '');
 
-    // In non-production mode, dynamically allow any localhost origin
-    if (process.env.NODE_ENV !== 'production') {
-      if (
-        normalizedOrigin.startsWith('http://localhost:') ||
-        normalizedOrigin.startsWith('http://127.0.0.1:') ||
-        normalizedOrigin === 'http://localhost' ||
-        normalizedOrigin === 'http://127.0.0.1'
-      ) {
-        return callback(null, true);
-      }
+    // Always allow localhost origins for local frontend development
+    if (
+      normalizedOrigin.startsWith('http://localhost:') ||
+      normalizedOrigin.startsWith('http://127.0.0.1:') ||
+      normalizedOrigin === 'http://localhost' ||
+      normalizedOrigin === 'http://127.0.0.1'
+    ) {
+      return callback(null, true);
     }
 
     if (configuredOrigins.includes('*') || configuredOrigins.includes(normalizedOrigin)) {
@@ -103,7 +104,10 @@ app.use(cors({
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
   credentials: true,
-}));
+};
+
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 
 // ─── Rate Limiting ────────────────────────────────────────────────────────────
 const limiter = rateLimit({
@@ -234,11 +238,11 @@ const startServer = async () => {
 
     if (isPrimaryInstance && schedulersEnabled) {
       logger.info('🕒 Starting background schedulers on primary instance...');
-      startScheduler();
-      startExportScheduler();
-      startBuffetSchedulers();
-      startHotDealScheduler();
-      logger.info('✅ Background schedulers active (notification, export, buffet, hot deals)');
+     // startScheduler();
+    //  startExportScheduler();
+     // startBuffetSchedulers();
+     // startHotDealScheduler();
+     // logger.info('✅ Background schedulers active (notification, export, buffet, hot deals)');
 
       // BullMQ Background Workers for PG Management
       try {
