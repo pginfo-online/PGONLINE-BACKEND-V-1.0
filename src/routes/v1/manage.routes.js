@@ -85,6 +85,7 @@ router.get('/tenants/:id', ownerOrAdmin, tenantController.getTenant);
 router.put('/tenants/:id', ownerOrAdmin, validate(validators.updateTenantSchema), tenantController.updateTenant);
 router.post('/tenants/:tenantId/assign-bed', ownerOrAdmin, tenantController.assignBed);
 router.post('/tenants/:id/vacate', ownerOrAdmin, tenantController.vacateTenant);
+router.delete('/tenants/:id', ownerOrAdmin, tenantController.deleteTenant);
 
 // ─── Staff Management APIs ────────────────────────────────────────────────────
 router.get('/pgs/:pgId/staff', ownerOrAdmin, staffController.getStaff);

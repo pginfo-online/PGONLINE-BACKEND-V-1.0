@@ -35,7 +35,8 @@ exports.getTenants = asyncHandler(async (req, res) => {
   if (req.query.room)      filter.room      = req.query.room;
   if (req.query.rentCycle) filter.rentCycle = req.query.rentCycle;
   if (req.query.search) {
-    const rx = new RegExp(req.query.search.trim(), 'i');
+    const escaped = req.query.search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const rx = new RegExp(escaped, 'i');
     filter.$or = [{ name: rx }, { phone: rx }, { email: rx }];
   }
 
@@ -314,7 +315,8 @@ exports.searchExistingTenants = asyncHandler(async (req, res) => {
   };
 
   if (query && query.trim().length > 0) {
-    const rx = new RegExp(query.trim(), 'i');
+    const escaped = query.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const rx = new RegExp(escaped, 'i');
     filter.$or = [
       { name: rx },
       { phone: rx },
@@ -337,5 +339,28 @@ exports.searchExistingTenants = asyncHandler(async (req, res) => {
   }));
 
   return successResponse(res, 'System users fetched for tenant onboarding', formatted);
+});
+
+// ─── Delete Tenant (with bed deallocation) ──────────────────────────────────
+exports.deleteTenant = asyncHandler(async (req, res) => {
+  const tenant = await Tenant.findOne({ _id: req.params.id, owner: req.user._id });
+  if (!tenant) return errorResponse(res, 'Tenant not found or access denied', 404);
+
+  // Free assigned bed if any
+  if (tenant.bed) {
+    await Bed.findByIdAndUpdate(tenant.bed, {
+      status:        'vacant',
+      currentTenant: null,
+      lastVacatedAt: new Date(),
+    });
+    if (tenant.room) {
+      await Room.findByIdAndUpdate(tenant.room, {
+        $inc: { occupiedBeds: -1, vacantBeds: 1 },
+      });
+    }
+  }
+
+  await Tenant.findByIdAndDelete(tenant._id);
+  return successResponse(res, 'Tenant record deleted successfully');
 });
 

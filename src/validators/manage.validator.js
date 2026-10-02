@@ -119,9 +119,15 @@ const addTenantSchema = z.object({
   }).optional(),
   expectedLeaveDate: z.string().optional().nullable(),
   noticePeriodDays: z.number().min(0).optional(),
+  aadhaar: z.string().optional().nullable().or(z.literal('')),
+  profilePhoto: z.string().optional().nullable().or(z.literal('')),
+  status: z.enum(['pending', 'active', 'notice', 'vacated', 'inactive']).optional(),
 });
 
-const updateTenantSchema = addTenantSchema.partial();
+const updateTenantSchema = addTenantSchema.partial().extend({
+  status: z.enum(['pending', 'active', 'notice', 'vacated', 'inactive']).optional(),
+  actualLeaveDate: z.string().optional().nullable(),
+});
 
 // Staff validation schemas
 const addStaffSchema = z.object({
