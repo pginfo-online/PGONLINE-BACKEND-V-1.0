@@ -58,6 +58,7 @@ app.use(compression());
 const defaultOrigins = [
   'https://www.pginfo.in',
   'https://pginfo.app',
+  'https://www.pginfo.app',
   'http://localhost:5173',
   'http://localhost:5174',
   'http://localhost:5175',
